@@ -106,3 +106,4 @@ Para iniciar la aplicación en tu entorno local:
   - Implementación de la aplicación frontend con Vite y React en `frontend/src/` (incluyendo vistas de Cliente, Cocina, Mostrador y Portal de Simulación).
   - Estilizado de la aplicación con un diseño de Glassmorphism Premium en `index.css`.
   - Validación extremo a extremo (E2E) exitosa del flujo completo de pedido, cocina y cobro.
+  - Inicialización del repositorio Git y creación del archivo `.gitignore` para versionado del proyecto.
