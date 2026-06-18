@@ -192,7 +192,7 @@ io.on('connection', (socket) => {
     if (tableIndex !== -1) {
       tables[tableIndex].status = 'pedido_pendiente';
       tables[tableIndex].currentOrderId = newOrder.id;
-      tables[tableIndex].total = orderTotal;
+      tables[tableIndex].total += orderTotal;
     }
     
     // Notificar a cocina, mostrador y a la mesa correspondiente
@@ -251,15 +251,12 @@ io.on('connection', (socket) => {
   socket.on('close-table', ({ tableId }) => {
     const tableIndex = tables.findIndex(t => t.id === tableId);
     if (tableIndex !== -1) {
-      const currentOrderId = tables[tableIndex].currentOrderId;
-      
-      // Marcar los pedidos de esa mesa como entregados/archivados
-      if (currentOrderId) {
-        const orderIndex = orders.findIndex(o => o.id === currentOrderId);
-        if (orderIndex !== -1) {
-          orders[orderIndex].status = 'entregado';
+      // Marcar todos los pedidos de esa mesa como entregados/archivados
+      orders.forEach(o => {
+        if (o.tableId === tableId) {
+          o.status = 'entregado';
         }
-      }
+      });
       
       // Resetear mesa a valores iniciales
       tables[tableIndex] = {

@@ -107,3 +107,5 @@ Para iniciar la aplicación en tu entorno local:
   - Estilizado de la aplicación con un diseño de Glassmorphism Premium en `index.css`.
   - Validación extremo a extremo (E2E) exitosa del flujo completo de pedido, cocina y cobro.
   - Inicialización del repositorio Git, vinculación al repositorio remoto de GitHub (https://github.com/peri294/PPR.git) y primer push a la rama `main`.
+  - **Corrección de Bug**: Se corrigió el backend en `server.js` para acumular correctamente los montos consumidos cuando una misma mesa realiza múltiples pedidos sucesivos, y archivar correctamente todos los pedidos de la mesa al cerrar la cuenta.
+  - **Prueba E2E Multi-Pedido**: Validación exitosa donde un cliente pide un *Espresso Italiano* ($1800), se le entrega, luego pide un *Cinnamon Roll* ($2200), acumulando correctamente **$4000** en el mostrador, solicitando la cuenta y cerrando la mesa de manera fluida.
