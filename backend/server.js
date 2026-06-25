@@ -169,9 +169,43 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Evento: Agregar items a un pedido existente
+  socket.on('update-order', ({ orderId, items, notes, paymentMethod }) => {
+    const orderIndex = orders.findIndex(o => o.id === orderId);
+    if (orderIndex !== -1) {
+      const order = orders[orderIndex];
+      
+      // Combinar items
+      items.forEach(newItem => {
+        const existingItem = order.items.find(i => i.productId === newItem.productId);
+        if (existingItem) {
+          existingItem.quantity += newItem.quantity;
+        } else {
+          order.items.push(newItem);
+        }
+      });
+      
+      if (notes) {
+        order.notes = notes;
+      }
+
+      const tableIndex = tables.findIndex(t => t.id === order.tableId);
+      if (tableIndex !== -1) {
+          const tableOrders = orders.filter(o => o.tableId === order.tableId && o.status !== 'entregado');
+          tables[tableIndex].total = tableOrders.reduce((acc, o) => {
+              return acc + o.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+          }, 0);
+          if (paymentMethod) tables[tableIndex].paymentMethod = paymentMethod;
+      }
+
+      io.to('kitchen').emit('orders-updated', orders.filter(o => o.status !== 'entregado'));
+      io.to('counter').emit('tables-updated', tables);
+      io.to(`table-${order.tableId}`).emit('order-status-changed', order);
+    }
+  });
   // Evento: Nuevo pedido
   socket.on('new-order', (orderData) => {
-    const { tableId, items, notes } = orderData;
+    const { tableId, items, notes, paymentMethod } = orderData;
     
     // Calcular total del pedido
     const orderTotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
@@ -193,6 +227,7 @@ io.on('connection', (socket) => {
       tables[tableIndex].status = 'pedido_pendiente';
       tables[tableIndex].currentOrderId = newOrder.id;
       tables[tableIndex].total += orderTotal;
+      if (paymentMethod) tables[tableIndex].paymentMethod = paymentMethod;
     }
     
     // Notificar a cocina, mostrador y a la mesa correspondiente

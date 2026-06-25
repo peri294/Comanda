@@ -667,3 +667,26 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.cart-float-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-gold), var(--accent-mocha-light));
+  color: var(--bg-dark);
+  border: none;
+  box-shadow: 0 10px 25px rgba(212, 163, 115, 0.4), var(--shadow-glow);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  transition: transform 0.2s ease;
+}
+
+.cart-float-btn:hover {
+  transform: scale(1.1);
+}
