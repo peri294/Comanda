@@ -28,6 +28,10 @@ export default function CounterView({ socket }) {
     if (!socket) return;
 
     socket.emit('join', 'counter');
+    // Si el socket se reconecta (ej. el server se reinicia), hay que re-unirse a la sala
+    // porque Socket.io no restaura la membresía de las salas automáticamente.
+    const rejoinOnReconnect = () => socket.emit('join', 'counter');
+    socket.on('connect', rejoinOnReconnect);
 
     // Tables state update
     socket.on('tables-updated', (updatedTables) => {
@@ -63,18 +67,17 @@ export default function CounterView({ socket }) {
       playNotificationSound('alert');
     });
 
-    // Order status update (e.g. preparing -> ready)
-    socket.on('order-status-changed', (updatedOrder) => {
-      setActiveOrders(prev => 
-        prev.map(o => o.id === updatedOrder.id ? updatedOrder : o).filter(o => o.status !== 'entregado')
-      );
+    // Full order list sync (item merges, status changes, table closed)
+    socket.on('orders-updated', (updatedOrders) => {
+      setActiveOrders(updatedOrders);
     });
 
     return () => {
+      socket.off('connect', rejoinOnReconnect);
       socket.off('tables-updated');
       socket.off('order-received-counter');
       socket.off('bill-requested');
-      socket.off('order-status-changed');
+      socket.off('orders-updated');
     };
   }, [socket]);
 
@@ -134,10 +137,14 @@ export default function CounterView({ socket }) {
 
   // View order details
   const handleViewDetails = (table) => {
-    const order = activeOrders.find(o => o.id === table.currentOrderId);
+    // Una mesa puede acumular varios pedidos separados (rondas sucesivas); el ticket
+    // tiene que mostrarlos todos, no solo el último (table.currentOrderId).
+    const tableOrders = activeOrders
+      .filter(o => o.tableId === table.id)
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     setSelectedTable({
       ...table,
-      order: order || null
+      orders: tableOrders
     });
     setIsModalOpen(true);
   };
@@ -309,27 +316,31 @@ export default function CounterView({ socket }) {
                 Estado: <strong style={{ color: 'var(--accent-gold)' }}>{selectedTable.status.toUpperCase()}</strong>
               </p>
               
-              {selectedTable.order ? (
+              {selectedTable.orders && selectedTable.orders.length > 0 ? (
                 <div style={{ marginTop: '20px' }}>
-                  <h4 style={{ fontSize: '1rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', marginBottom: '10px' }}>
-                    Productos Consumidos (Orden: {selectedTable.order.id.substring(4, 10)})
-                  </h4>
-                  <ul style={{ listStyle: 'none' }}>
-                    {selectedTable.order.items.map((item, idx) => (
-                      <li key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed rgba(255,255,255,0.05)' }}>
-                        <span><strong style={{ color: 'var(--accent-gold)' }}>{item.quantity}x</strong> {item.name}</span>
-                        <span>${item.price * item.quantity}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  {selectedTable.orders.map((order, orderIdx) => (
+                    <div key={order.id} style={{ marginBottom: '18px' }}>
+                      <h4 style={{ fontSize: '1rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', marginBottom: '10px' }}>
+                        Pedido {orderIdx + 1} (Orden: {order.id.slice(-6)})
+                      </h4>
+                      <ul style={{ listStyle: 'none' }}>
+                        {order.items.map((item, idx) => (
+                          <li key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed rgba(255,255,255,0.05)' }}>
+                            <span><strong style={{ color: 'var(--accent-gold)' }}>{item.quantity}x</strong> {item.name}</span>
+                            <span>${item.price * item.quantity}</span>
+                          </li>
+                        ))}
+                      </ul>
 
-                  {selectedTable.order.notes && (
-                    <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(244,162,97,0.08)', border: '1px solid rgba(244,162,97,0.2)', borderRadius: '8px', fontSize: '0.85rem' }}>
-                      <strong>Notas:</strong> {selectedTable.order.notes}
+                      {order.notes && (
+                        <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(244,162,97,0.08)', border: '1px solid rgba(244,162,97,0.2)', borderRadius: '8px', fontSize: '0.85rem' }}>
+                          <strong>Notas:</strong> {order.notes}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  ))}
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px', fontSize: '1.25rem', fontWeight: 800 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border-color)', fontSize: '1.25rem', fontWeight: 800 }}>
                     <span>Total Consumido:</span>
                     <span style={{ color: 'var(--accent-gold)' }}>${selectedTable.total}</span>
                   </div>

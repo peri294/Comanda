@@ -22,6 +22,10 @@ export default function KitchenView({ socket }) {
     if (!socket) return;
 
     socket.emit('join', 'kitchen');
+    // Si el socket se reconecta (ej. el server se reinicia), hay que re-unirse a la sala
+    // porque Socket.io no restaura la membresía de las salas automáticamente.
+    const rejoinOnReconnect = () => socket.emit('join', 'kitchen');
+    socket.on('connect', rejoinOnReconnect);
 
     // Received a new order
     socket.on('order-received', (newOrder) => {
@@ -40,6 +44,7 @@ export default function KitchenView({ socket }) {
     });
 
     return () => {
+      socket.off('connect', rejoinOnReconnect);
       socket.off('order-received');
       socket.off('orders-updated');
     };
@@ -128,7 +133,7 @@ export default function KitchenView({ socket }) {
               <div className="kitchen-card-header">
                 <div>
                   <h3 style={{ fontSize: '1.3rem', fontWeight: 800 }}>Mesa {order.tableId}</h3>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>ID: {order.id.substring(4, 10)}</span>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>ID: {order.id.slice(-6)}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
                   <span className={`badge ${

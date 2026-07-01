@@ -89,7 +89,9 @@ export default function App() {
     window.history.pushState({}, '', newUrl);
     
     setView(newView);
-    setTableId(table);
+    // Normalizado a string: el backend compara el id de mesa como string,
+    // y el botón "Ir a Mesa" pasa un número mientras que la URL siempre da un string.
+    setTableId(table !== null ? String(table) : null);
   };
 
   return (
@@ -139,8 +141,10 @@ export default function App() {
       <main className="main-content">
         
         {/* VIEW 1: Customer View */}
+        {/* key={tableId} fuerza un remount completo al cambiar de mesa en la misma pestaña,
+            evitando que el carrito/pedido activo de una mesa quede pegado al pasar a otra */}
         {view === 'client' && tableId && (
-          <ClientView tableId={tableId} socket={socket} />
+          <ClientView key={tableId} tableId={tableId} socket={socket} />
         )}
 
         {/* VIEW 2: Kitchen Screen */}

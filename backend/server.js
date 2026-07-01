@@ -148,7 +148,10 @@ app.get('/api/menu', (req, res) => {
 app.get('/api/initial-state', (req, res) => {
   res.json({
     tables,
-    orders: orders.filter(o => o.status !== 'entregado')
+    // No incluye pedidos de mesas ya cerradas/cobradas. A diferencia del filtro de cocina
+    // (status !== 'entregado'), esto SÍ incluye pedidos ya servidos pero aún no pagados,
+    // que el mostrador necesita mostrar en el ticket. KitchenView aplica su propio filtro extra.
+    orders: orders.filter(o => !o.archived)
   });
 });
 
@@ -191,7 +194,9 @@ io.on('connection', (socket) => {
 
       const tableIndex = tables.findIndex(t => t.id === order.tableId);
       if (tableIndex !== -1) {
-          const tableOrders = orders.filter(o => o.tableId === order.tableId && o.status !== 'entregado');
+          // !archived (no solo status !== 'entregado'): la mesa puede tener otro pedido
+          // de una ronda anterior ya servido pero todavía no cobrado, y su total no se debe perder.
+          const tableOrders = orders.filter(o => o.tableId === order.tableId && !o.archived);
           tables[tableIndex].total = tableOrders.reduce((acc, o) => {
               return acc + o.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
           }, 0);
@@ -199,14 +204,18 @@ io.on('connection', (socket) => {
       }
 
       io.to('kitchen').emit('orders-updated', orders.filter(o => o.status !== 'entregado'));
+      io.to('counter').emit('orders-updated', orders.filter(o => !o.archived));
       io.to('counter').emit('tables-updated', tables);
       io.to(`table-${order.tableId}`).emit('order-status-changed', order);
     }
   });
   // Evento: Nuevo pedido
   socket.on('new-order', (orderData) => {
-    const { tableId, items, notes, paymentMethod } = orderData;
-    
+    // El tableId puede llegar como número o string según cómo navegó el cliente en el frontend;
+    // se normaliza a string porque tables[].id siempre es string.
+    const tableId = String(orderData.tableId);
+    const { items, notes, paymentMethod } = orderData;
+
     // Calcular total del pedido
     const orderTotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     
@@ -216,6 +225,7 @@ io.on('connection', (socket) => {
       items,
       notes: notes || '',
       status: 'pendiente',
+      archived: false, // se marca true recién cuando se cierra/cobra la mesa (close-table)
       createdAt: new Date().toISOString()
     };
     
@@ -259,6 +269,7 @@ io.on('connection', (socket) => {
       
       // Notificar a todos los canales relevantes
       io.to('kitchen').emit('orders-updated', orders.filter(o => o.status !== 'entregado'));
+      io.to('counter').emit('orders-updated', orders.filter(o => !o.archived));
       io.to('counter').emit('tables-updated', tables);
       io.to(`table-${order.tableId}`).emit('order-status-changed', order);
       if (tableIndex !== -1) {
@@ -268,7 +279,8 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Solicitar cierre de cuenta (desde Cliente)
-  socket.on('request-bill', ({ tableId, paymentMethod }) => {
+  socket.on('request-bill', ({ tableId: rawTableId, paymentMethod }) => {
+    const tableId = String(rawTableId);
     const tableIndex = tables.findIndex(t => t.id === tableId);
     if (tableIndex !== -1) {
       const nextStatus = paymentMethod === 'efectivo' ? 'esperando_cuenta' : 'pagando_tarjeta';
@@ -283,16 +295,18 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Confirmar cobro y liberar mesa (desde Mostrador/Caja)
-  socket.on('close-table', ({ tableId }) => {
+  socket.on('close-table', ({ tableId: rawTableId }) => {
+    const tableId = String(rawTableId);
     const tableIndex = tables.findIndex(t => t.id === tableId);
     if (tableIndex !== -1) {
-      // Marcar todos los pedidos de esa mesa como entregados/archivados
+      // Marcar todos los pedidos de esa mesa como entregados y archivados (mesa cobrada)
       orders.forEach(o => {
         if (o.tableId === tableId) {
           o.status = 'entregado';
+          o.archived = true;
         }
       });
-      
+
       // Resetear mesa a valores iniciales
       tables[tableIndex] = {
         id: tableId,
@@ -301,10 +315,11 @@ io.on('connection', (socket) => {
         paymentMethod: null,
         total: 0
       };
-      
+
       // Notificar a mostrador, cocina y a la mesa correspondiente
       io.to('counter').emit('tables-updated', tables);
       io.to('kitchen').emit('orders-updated', orders.filter(o => o.status !== 'entregado'));
+      io.to('counter').emit('orders-updated', orders.filter(o => !o.archived));
       io.to(`table-${tableId}`).emit('table-closed');
       io.to(`table-${tableId}`).emit('table-state', tables[tableIndex]);
     }
