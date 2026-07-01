@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2 } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { createAudioContext, playTone } from '../utils/sound';
 
@@ -7,9 +7,17 @@ export default function CounterView({ socket, token, onLogout }) {
   const [tables, setTables] = useState([]);
   const [activeOrders, setActiveOrders] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [selectedTable, setSelectedTable] = useState(null);
+  // Solo el id: la mesa y sus pedidos se derivan en vivo de `tables`/`activeOrders`
+  // en cada render, así el modal no queda con datos viejos mientras está abierto.
+  const [selectedTableId, setSelectedTableId] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [dailySales, setDailySales] = useState(0);
+  const [menu, setMenu] = useState([]);
+
+  // Edición de un pedido puntual (corrección de error humano, antes de cobrar)
+  const [editingOrderId, setEditingOrderId] = useState(null);
+  const [editItems, setEditItems] = useState([]);
+  const [itemToAdd, setItemToAdd] = useState('');
 
   // Load initial state
   useEffect(() => {
@@ -23,6 +31,14 @@ export default function CounterView({ socket, token, onLogout }) {
       })
       .catch(err => console.error("Error fetching initial counter state:", err));
   }, [token]);
+
+  // Menú, para poder agregar productos a un pedido al editarlo
+  useEffect(() => {
+    fetch('http://localhost:3001/api/menu')
+      .then(res => res.json())
+      .then(setMenu)
+      .catch(err => console.error("Error fetching menu:", err));
+  }, []);
 
   useSocketRoom(socket, 'counter', token);
 
@@ -102,26 +118,80 @@ export default function CounterView({ socket, token, onLogout }) {
   const handleCloseTable = (tableId, total) => {
     socket.emit('close-table', { tableId });
     setDailySales(prev => prev + total);
-    
+
     // Clear details modal if open
-    if (selectedTable && selectedTable.id === tableId) {
-      setIsModalOpen(false);
+    if (selectedTableId === tableId) {
+      closeModal();
     }
   };
 
   // View order details
   const handleViewDetails = (table) => {
-    // Una mesa puede acumular varios pedidos separados (rondas sucesivas); el ticket
-    // tiene que mostrarlos todos, no solo el último (table.currentOrderId).
-    const tableOrders = activeOrders
-      .filter(o => o.tableId === table.id)
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    setSelectedTable({
-      ...table,
-      orders: tableOrders
-    });
+    setSelectedTableId(table.id);
     setIsModalOpen(true);
   };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setSelectedTableId(null);
+    cancelEditingOrder();
+  };
+
+  // --- Edición de un pedido puntual (solo mientras está 'pendiente') ---
+
+  const startEditingOrder = (order) => {
+    setEditingOrderId(order.id);
+    setEditItems(order.items.map(item => ({ ...item })));
+    setItemToAdd('');
+  };
+
+  const cancelEditingOrder = () => {
+    setEditingOrderId(null);
+    setEditItems([]);
+    setItemToAdd('');
+  };
+
+  const changeEditItemQty = (productId, amount) => {
+    setEditItems(prev =>
+      prev
+        .map(item => item.productId === productId ? { ...item, quantity: item.quantity + amount } : item)
+        .filter(item => item.quantity > 0)
+    );
+  };
+
+  const removeEditItem = (productId) => {
+    setEditItems(prev => prev.filter(item => item.productId !== productId));
+  };
+
+  const addEditItem = () => {
+    const menuItem = menu.find(m => m.id === itemToAdd);
+    if (!menuItem) return;
+    setEditItems(prev => {
+      const existing = prev.find(item => item.productId === menuItem.id);
+      if (existing) {
+        return prev.map(item => item.productId === menuItem.id ? { ...item, quantity: item.quantity + 1 } : item);
+      }
+      return [...prev, { productId: menuItem.id, name: menuItem.name, price: menuItem.price, quantity: 1 }];
+    });
+    setItemToAdd('');
+  };
+
+  const saveEditedOrder = () => {
+    socket.emit('edit-order', { orderId: editingOrderId, items: editItems });
+    cancelEditingOrder();
+  };
+
+  const handleCancelOrder = (order) => {
+    if (!window.confirm(`¿Cancelar el pedido completo de la Mesa ${order.tableId}?`)) return;
+    socket.emit('cancel-order', { orderId: order.id });
+    if (editingOrderId === order.id) cancelEditingOrder();
+  };
+
+  // Mesa y pedidos seleccionados, derivados en vivo (no una copia congelada al abrir el modal)
+  const selectedTable = selectedTableId ? tables.find(t => t.id === selectedTableId) : null;
+  const selectedTableOrders = selectedTableId
+    ? activeOrders.filter(o => o.tableId === selectedTableId).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    : [];
 
   // Stats calculation
   const tablesOccupied = tables.filter(t => t.status !== 'libre').length;
@@ -284,11 +354,11 @@ export default function CounterView({ socket, token, onLogout }) {
 
       {/* Table Detail Modal */}
       {isModalOpen && selectedTable && (
-        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+        <div className="modal-overlay" onClick={closeModal}>
           <div className="glass-panel modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 style={{ fontSize: '1.4rem', fontWeight: 800 }}>Mesa {selectedTable.id}</h3>
-              <button className="modal-close" onClick={() => setIsModalOpen(false)}>
+              <button className="modal-close" onClick={closeModal}>
                 <X size={24} />
               </button>
             </div>
@@ -298,26 +368,105 @@ export default function CounterView({ socket, token, onLogout }) {
                 Estado: <strong style={{ color: 'var(--accent-gold)' }}>{selectedTable.status.toUpperCase()}</strong>
               </p>
               
-              {selectedTable.orders && selectedTable.orders.length > 0 ? (
+              {selectedTableOrders.length > 0 ? (
                 <div style={{ marginTop: '20px' }}>
-                  {selectedTable.orders.map((order, orderIdx) => (
+                  {selectedTableOrders.map((order, orderIdx) => (
                     <div key={order.id} style={{ marginBottom: '18px' }}>
-                      <h4 style={{ fontSize: '1rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', marginBottom: '10px' }}>
-                        Pedido {orderIdx + 1} (Orden: {order.id.slice(-6)})
-                      </h4>
-                      <ul style={{ listStyle: 'none' }}>
-                        {order.items.map((item, idx) => (
-                          <li key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed rgba(255,255,255,0.05)' }}>
-                            <span><strong style={{ color: 'var(--accent-gold)' }}>{item.quantity}x</strong> {item.name}</span>
-                            <span>${item.price * item.quantity}</span>
-                          </li>
-                        ))}
-                      </ul>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', marginBottom: '10px' }}>
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700 }}>
+                          Pedido {orderIdx + 1} (Orden: {order.id.slice(-6)})
+                        </h4>
+                        {order.status === 'pendiente' && editingOrderId !== order.id && (
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                              onClick={() => startEditingOrder(order)}
+                            >
+                              <Pencil size={12} /> Editar
+                            </button>
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '4px 10px', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'rgba(231, 111, 81, 0.3)' }}
+                              onClick={() => handleCancelOrder(order)}
+                            >
+                              <Trash2 size={12} /> Cancelar
+                            </button>
+                          </div>
+                        )}
+                      </div>
 
-                      {order.notes && (
-                        <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(244,162,97,0.08)', border: '1px solid rgba(244,162,97,0.2)', borderRadius: '8px', fontSize: '0.85rem' }}>
-                          <strong>Notas:</strong> {order.notes}
+                      {editingOrderId === order.id ? (
+                        <div>
+                          {editItems.length === 0 && (
+                            <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginBottom: '10px' }}>
+                              Sin productos: al guardar, el pedido queda cancelado.
+                            </p>
+                          )}
+                          {editItems.map(item => (
+                            <div key={item.productId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px dashed rgba(255,255,255,0.05)' }}>
+                              <span>{item.name}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <button className="btn-secondary" style={{ padding: '4px', borderRadius: '6px' }} onClick={() => changeEditItemQty(item.productId, -1)}>
+                                  <Minus size={12} />
+                                </button>
+                                <span style={{ fontWeight: 700, minWidth: '16px', textAlign: 'center' }}>{item.quantity}</span>
+                                <button className="btn-secondary" style={{ padding: '4px', borderRadius: '6px' }} onClick={() => changeEditItemQty(item.productId, 1)}>
+                                  <Plus size={12} />
+                                </button>
+                                <button className="btn-secondary" style={{ padding: '4px', borderRadius: '6px', color: 'var(--danger)' }} onClick={() => removeEditItem(item.productId)}>
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                            <select
+                              value={itemToAdd}
+                              onChange={(e) => setItemToAdd(e.target.value)}
+                              style={{
+                                flex: 1, padding: '8px', borderRadius: '8px',
+                                background: 'rgba(0, 0, 0, 0.2)', border: '1px solid var(--border-color)',
+                                color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.85rem'
+                              }}
+                            >
+                              <option value="">Agregar producto...</option>
+                              {menu.map(m => (
+                                <option key={m.id} value={m.id}>{m.name} — ${m.price}</option>
+                              ))}
+                            </select>
+                            <button className="btn-secondary" style={{ fontSize: '0.8rem' }} disabled={!itemToAdd} onClick={addEditItem}>
+                              <Plus size={14} /> Agregar
+                            </button>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
+                            <button className="btn-primary" style={{ flex: 1 }} onClick={saveEditedOrder}>
+                              Guardar Cambios
+                            </button>
+                            <button className="btn-secondary" style={{ flex: 1 }} onClick={cancelEditingOrder}>
+                              Descartar
+                            </button>
+                          </div>
                         </div>
+                      ) : (
+                        <>
+                          <ul style={{ listStyle: 'none' }}>
+                            {order.items.map((item, idx) => (
+                              <li key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed rgba(255,255,255,0.05)' }}>
+                                <span><strong style={{ color: 'var(--accent-gold)' }}>{item.quantity}x</strong> {item.name}</span>
+                                <span>${item.price * item.quantity}</span>
+                              </li>
+                            ))}
+                          </ul>
+
+                          {order.notes && (
+                            <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(244,162,97,0.08)', border: '1px solid rgba(244,162,97,0.2)', borderRadius: '8px', fontSize: '0.85rem' }}>
+                              <strong>Notas:</strong> {order.notes}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   ))}
@@ -344,7 +493,7 @@ export default function CounterView({ socket, token, onLogout }) {
                   Confirmar Cobro y Cerrar Mesa
                 </button>
               )}
-              <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setIsModalOpen(false)}>
+              <button className="btn-secondary" style={{ flex: 1 }} onClick={closeModal}>
                 Cerrar Detalle
               </button>
             </div>

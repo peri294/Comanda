@@ -117,8 +117,8 @@ export default function ClientView({ tableId, socket }) {
   // Cart total
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-  // An order can still receive extra items only while it hasn't been delivered yet
-  const canMergeIntoActiveOrder = activeOrder && activeOrder.status !== 'entregado';
+  // An order can still receive extra items only while it hasn't been delivered/cancelled
+  const canMergeIntoActiveOrder = activeOrder && activeOrder.status !== 'entregado' && activeOrder.status !== 'cancelado';
 
   // Send Order (creates a new order, or merges into the active undelivered one)
   const submitOrder = () => {
@@ -213,12 +213,14 @@ export default function ClientView({ tableId, socket }) {
                 <span style={{ color:
                   activeOrder.status === 'pendiente' ? 'var(--warning)' :
                   activeOrder.status === 'en_preparacion' ? 'var(--accent-gold)' :
-                  activeOrder.status === 'listo' ? 'var(--success)' : 'var(--text-secondary)'
+                  activeOrder.status === 'listo' ? 'var(--success)' :
+                  activeOrder.status === 'cancelado' ? 'var(--danger)' : 'var(--text-secondary)'
                 , marginLeft: '5px' }}>
                   {activeOrder.status === 'pendiente' && 'Esperando aprobación'}
                   {activeOrder.status === 'en_preparacion' && 'En preparación 🍳'}
                   {activeOrder.status === 'listo' && '¡Listo para retirar! ☕'}
                   {activeOrder.status === 'entregado' && 'Entregado'}
+                  {activeOrder.status === 'cancelado' && 'Cancelado por el mostrador'}
                 </span>
               </div>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
@@ -230,12 +232,14 @@ export default function ClientView({ tableId, socket }) {
               <div className={`badge ${
                 activeOrder.status === 'pendiente' ? 'badge-pending' :
                 activeOrder.status === 'en_preparacion' ? 'badge-cooking' :
-                activeOrder.status === 'listo' ? 'badge-ready' : 'badge-delivered'
+                activeOrder.status === 'listo' ? 'badge-ready' :
+                activeOrder.status === 'cancelado' ? 'badge-cancelled' : 'badge-delivered'
               }`}>
                 {activeOrder.status === 'pendiente' && <Clock size={12} />}
                 {activeOrder.status === 'en_preparacion' && <ChefHat size={12} />}
                 {activeOrder.status === 'listo' && <CheckCircle size={12} />}
                 {activeOrder.status === 'entregado' && <CheckCircle size={12} />}
+                {activeOrder.status === 'cancelado' && <X size={12} />}
                 {activeOrder.status}
               </div>
             </div>

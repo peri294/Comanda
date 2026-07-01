@@ -170,15 +170,28 @@ const findTable = (tableId) => tables.find(t => t.id === tableId);
 const recomputeTableTotal = (tableId) => {
   const table = findTable(tableId);
   if (!table) return;
-  table.total = orders
-    .filter(o => o.tableId === tableId && !o.archived)
-    .reduce((acc, o) => acc + o.items.reduce((sum, item) => sum + item.price * item.quantity, 0), 0);
+  const activeOrders = orders.filter(o => o.tableId === tableId && !o.archived);
+  table.total = activeOrders.reduce((acc, o) => acc + o.items.reduce((sum, item) => sum + item.price * item.quantity, 0), 0);
+
+  // Si se cancela el único pedido pendiente, la mesa no puede quedar mostrando
+  // "pedido pendiente"/"comiendo" fantasma con $0 y ningún pedido real detrás.
+  if (activeOrders.length === 0 && (table.status === 'pedido_pendiente' || table.status === 'comiendo')) {
+    table.status = 'libre';
+    table.currentOrderId = null;
+    table.paymentMethod = null;
+  } else if (table.currentOrderId && !activeOrders.find(o => o.id === table.currentOrderId)) {
+    // El pedido "actual" de la mesa se canceló, pero quedan otros: apuntar al más reciente.
+    table.currentOrderId = activeOrders[activeOrders.length - 1].id;
+  }
 };
 
-// Cocina solo necesita ver pedidos aún no entregados; el mostrador necesita ver todo
+// Cocina no necesita ver pedidos ya entregados ni cancelados por el mostrador.
+const isKitchenVisible = (o) => o.status !== 'entregado' && o.status !== 'cancelado';
+
+// Cocina solo necesita ver pedidos activos; el mostrador necesita ver todo
 // lo consumido hasta que la mesa se cobra, aunque cocina ya lo haya servido.
 const broadcastOrders = () => {
-  io.to('kitchen').emit('orders-updated', orders.filter(o => o.status !== 'entregado'));
+  io.to('kitchen').emit('orders-updated', orders.filter(isKitchenVisible));
   io.to('counter').emit('orders-updated', orders.filter(o => !o.archived));
 };
 
@@ -249,7 +262,7 @@ io.on('connection', (socket) => {
   // Evento: Agregar items a un pedido existente (mientras no fue entregado/archivado)
   socket.on('update-order', ({ orderId, items, notes, paymentMethod }) => {
     const order = orders.find(o => o.id === orderId);
-    if (!order) return;
+    if (!order || order.archived) return;
 
     // Combinar items
     items.forEach(newItem => {
@@ -328,6 +341,46 @@ io.on('connection', (socket) => {
     broadcastTables();
     io.to(`table-${order.tableId}`).emit('order-status-changed', order);
     if (table) io.to(`table-${order.tableId}`).emit('table-state', table);
+  });
+
+  // Evento: Corregir un pedido desde el Mostrador (error humano, antes de cobrar).
+  // Reemplaza la lista de items completa (permite sacar, cambiar cantidad y agregar).
+  // Solo mientras cocina no lo empezó a preparar, para no confundir al cocinero.
+  socket.on('edit-order', ({ orderId, items }) => {
+    if (!socket.data.roles?.has('counter')) return;
+    const order = orders.find(o => o.id === orderId);
+    if (!order || order.archived || order.status !== 'pendiente') return;
+
+    // Si el mostrador saca todos los items, es lo mismo que cancelar el pedido entero.
+    if (!items || items.length === 0) {
+      order.status = 'cancelado';
+      order.archived = true;
+    } else {
+      order.items = items;
+    }
+
+    recomputeTableTotal(order.tableId);
+    broadcastOrders();
+    broadcastTables();
+    io.to(`table-${order.tableId}`).emit('order-status-changed', order);
+    // Alerta aparte para cocina: el pedido ya estaba en su pantalla y cambió.
+    io.to('kitchen').emit('order-modified', { order, reason: order.archived ? 'cancelled' : 'edited' });
+  });
+
+  // Evento: Cancelar un pedido completo desde el Mostrador (mismas reglas que edit-order).
+  socket.on('cancel-order', ({ orderId }) => {
+    if (!socket.data.roles?.has('counter')) return;
+    const order = orders.find(o => o.id === orderId);
+    if (!order || order.archived || order.status !== 'pendiente') return;
+
+    order.status = 'cancelado';
+    order.archived = true;
+
+    recomputeTableTotal(order.tableId);
+    broadcastOrders();
+    broadcastTables();
+    io.to(`table-${order.tableId}`).emit('order-status-changed', order);
+    io.to('kitchen').emit('order-modified', { order, reason: 'cancelled' });
   });
 
   // Evento: Solicitar cierre de cuenta (desde Cliente)

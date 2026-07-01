@@ -5,6 +5,8 @@ import { createAudioContext, playTone } from '../utils/sound';
 
 export default function KitchenView({ socket, token, onLogout }) {
   const [orders, setOrders] = useState([]);
+  // Pedidos que el mostrador acaba de corregir, para resaltarlos un rato en la tarjeta
+  const [flashIds, setFlashIds] = useState(new Set());
 
   // Fetch initial active orders
   useEffect(() => {
@@ -14,8 +16,8 @@ export default function KitchenView({ socket, token, onLogout }) {
       .then(res => res.json())
       .then(data => {
         if (data.orders) {
-          // Filter out delivered orders
-          setOrders(data.orders.filter(o => o.status !== 'entregado'));
+          // Filter out delivered/cancelled orders
+          setOrders(data.orders.filter(o => o.status !== 'entregado' && o.status !== 'cancelado'));
         }
       })
       .catch(err => console.error("Error loading initial kitchen orders:", err));
@@ -43,9 +45,25 @@ export default function KitchenView({ socket, token, onLogout }) {
       setOrders(updatedOrders);
     });
 
+    // El mostrador corrigió o canceló un pedido que cocina ya tenía en pantalla
+    socket.on('order-modified', ({ order, reason }) => {
+      playOrderModifiedSound();
+      if (reason === 'edited') {
+        setFlashIds(prev => new Set(prev).add(order.id));
+        setTimeout(() => {
+          setFlashIds(prev => {
+            const next = new Set(prev);
+            next.delete(order.id);
+            return next;
+          });
+        }, 5000);
+      }
+    });
+
     return () => {
       socket.off('order-received');
       socket.off('orders-updated');
+      socket.off('order-modified');
     };
   }, [socket]);
 
@@ -55,6 +73,17 @@ export default function KitchenView({ socket, token, onLogout }) {
       const ctx = createAudioContext();
       const gainNode = playTone(ctx, { freq: 659.25, type: 'triangle', gain: 0.2, duration: 0.6 }); // E5
       gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    } catch (e) {
+      console.log("Audio play error", e);
+    }
+  };
+
+  // Tono distinto (descendente) para cuando el mostrador corrige/cancela un pedido
+  const playOrderModifiedSound = () => {
+    try {
+      const ctx = createAudioContext();
+      playTone(ctx, { freq: 700, type: 'square', gain: 0.15, duration: 0.15 });
+      playTone(ctx, { freq: 400, type: 'square', gain: 0.15, at: 0.18, duration: 0.25 });
     } catch (e) {
       console.log("Audio play error", e);
     }
@@ -122,7 +151,7 @@ export default function KitchenView({ socket, token, onLogout }) {
       ) : (
         <div className="kitchen-board">
           {orders.map(order => (
-            <div key={order.id} className="glass-panel kitchen-card" style={{ 
+            <div key={order.id} className={`glass-panel kitchen-card ${flashIds.has(order.id) ? 'kitchen-card-flash' : ''}`} style={{
               borderTop: `4px solid ${
                 order.status === 'pendiente' ? 'var(--warning)' :
                 order.status === 'en_preparacion' ? 'var(--accent-gold)' : 'var(--success)'

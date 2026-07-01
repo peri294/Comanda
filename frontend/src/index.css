@@ -79,6 +79,17 @@ body {
   }
 }
 
+@keyframes pulse-glow-danger {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(231, 111, 81, 0.25);
+    border-color: rgba(231, 111, 81, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 28px rgba(231, 111, 81, 0.55);
+    border-color: rgba(231, 111, 81, 0.8);
+  }
+}
+
 @keyframes ping-soft {
   0% {
     transform: scale(1);
@@ -213,6 +224,12 @@ body {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text-secondary);
   border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.badge-cancelled {
+  background: rgba(231, 111, 81, 0.15);
+  color: var(--danger);
+  border: 1px solid rgba(231, 111, 81, 0.3);
 }
 
 /* App layouts */
@@ -484,6 +501,12 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+}
+
+/* El mostrador corrigió/canceló este pedido mientras cocina lo tenía en pantalla */
+.kitchen-card-flash {
+  animation: pulse-glow-danger 1s infinite;
+  border-color: var(--danger) !important;
 }
 
 .kitchen-card-header {

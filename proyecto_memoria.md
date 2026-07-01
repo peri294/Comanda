@@ -56,11 +56,15 @@ interface Order {
   id: string;
   tableId: string;
   items: OrderItem[];
-  status: 'pendiente' | 'en_preparacion' | 'listo' | 'entregado';
+  status: 'pendiente' | 'en_preparacion' | 'listo' | 'entregado' | 'cancelado';
+  archived: boolean; // true cuando la mesa se cobró (close-table) o el mostrador canceló el pedido
   createdAt: string; // ISO String
   notes?: string;
 }
 ```
+`status` es el flujo de cocina; `archived` es independiente y decide si el pedido cuenta para el
+total/ticket del mostrador. Un pedido puede estar `entregado` (cocina ya lo sirvió) sin estar
+`archived` todavía (la mesa no pagó) — por eso cocina filtra por `status` y mostrador por `archived`.
 
 ### Menú (Menu)
 ```typescript
@@ -113,4 +117,5 @@ Para iniciar la aplicación en tu entorno local:
   - **Fix crítico**: Se restauró `ClientView.jsx`, que había quedado roto (sin carrito, cantidades, notas ni seguimiento de estado) en un commit anterior. Se corrigieron además bugs reales de sincronización: `tableId` inconsistente (number vs string) entre navegación por botón y por URL, estado de mesa pegado al cambiar de mesa en la misma pestaña, reconexión de sockets que no volvía a unirse a las salas, y el mostrador mostrando solo el último pedido de una mesa en vez del ticket completo (se separó el concepto de pedido `entregado` por cocina del de mesa `archived`/cobrada).
   - **Refactor**: se extrajeron `findTable()`, `recomputeTableTotal()`, `broadcastOrders()` y `broadcastTables()` en el backend para centralizar la lógica de filtrado que venía repetida en 6 puntos distintos; se creó `frontend/src/utils/sound.js` (unifica el boilerplate de Web Audio API) y `frontend/src/hooks/useSocketRoom.js` (unifica el patrón de unirse a una sala + re-unirse en reconexión).
   - **Autenticación de personal**: se agregó login con contraseña compartida por rol (`cocina123` / `mostrador123` por defecto, sobreescribibles con las variables de entorno `KITCHEN_PASSWORD` y `COUNTER_PASSWORD`) para las pantallas de Cocina y Mostrador. Sesión persistente en `localStorage` del navegador. El token no solo oculta la pantalla: el backend también rechaza `update-order-status` sin sesión de cocina y `close-table` sin sesión de mostrador, y `/api/initial-state` exige el token en el header `Authorization`. Limitación conocida: los tokens viven en memoria (se pierden si el server se reinicia, igual que el resto del estado) y no hay usuarios individuales, solo un password por rol — suficiente para una tablet compartida por turno, no para trazabilidad por empleado.
+  - **Edición de pedidos desde el Mostrador**: para corregir errores humanos antes de cobrar, el mostrador puede editar (sacar/agregar items, cambiar cantidad) o cancelar un pedido completo, pero **solo mientras su estado sea `pendiente`** (si cocina ya lo empezó a preparar, el mostrador no puede tocarlo). Eventos nuevos `edit-order` y `cancel-order` (protegidos con `socket.data.roles.has('counter')`, misma lógica que `close-table`), reutilizando `broadcastOrders()`/`broadcastTables()` — no hizo falta cambiar la estructura de comunicación cocina-mostrador. Cocina recibe una alerta aparte (`order-modified`, sonido distinto + borde parpadeante `kitchen-card-flash` por 5s) para notar el cambio sin tener que estar mirando la pantalla fijo. Si se cancela el único pedido de una mesa, `recomputeTableTotal()` también resetea la mesa a `libre` (antes quedaba "fantasma": estado `pedido_pendiente` con $0 y ningún pedido real). Se agregó el status `cancelado` al modelo de `Order` (distinto de `entregado`, para no confundir al cliente si ve el estado de su pedido).
 
