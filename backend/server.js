@@ -165,6 +165,22 @@ const MENU = [
 // --- HELPERS ---
 
 const findTable = (tableId) => tables.find(t => t.id === tableId);
+const getMenuItem = (productId) => MENU.find(m => m.id === productId);
+
+// Nunca confiar en precio/nombre que manda el cliente: siempre se recalculan contra
+// el MENU del servidor, así nadie puede pedir gratis (o más caro) manipulando el payload.
+// También descarta productos inexistentes y cantidades inválidas.
+const sanitizeItems = (items) => {
+  if (!Array.isArray(items)) return [];
+  return items.reduce((acc, item) => {
+    const menuItem = getMenuItem(item?.productId);
+    const quantity = Math.floor(Number(item?.quantity));
+    if (menuItem && Number.isFinite(quantity) && quantity > 0) {
+      acc.push({ productId: menuItem.id, name: menuItem.name, price: menuItem.price, quantity });
+    }
+    return acc;
+  }, []);
+};
 
 // Recalcula el total de una mesa a partir de sus pedidos activos (no archivados).
 const recomputeTableTotal = (tableId) => {
@@ -260,11 +276,12 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Agregar items a un pedido existente (mientras no fue entregado/archivado)
-  socket.on('update-order', ({ orderId, items, notes, paymentMethod }) => {
+  socket.on('update-order', ({ orderId, items: rawItems, notes, paymentMethod }) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || order.archived) return;
 
     // Combinar items
+    const items = sanitizeItems(rawItems);
     items.forEach(newItem => {
       const existingItem = order.items.find(i => i.productId === newItem.productId);
       if (existingItem) {
@@ -288,11 +305,13 @@ io.on('connection', (socket) => {
     // El tableId puede llegar como número o string según cómo navegó el cliente en el frontend;
     // se normaliza a string porque tables[].id siempre es string.
     const tableId = String(orderData.tableId);
-    const { items, notes, paymentMethod } = orderData;
+    const { notes, paymentMethod } = orderData;
+    const items = sanitizeItems(orderData.items);
+    if (items.length === 0) return; // nada válido para pedir (menú manipulado, cantidades inválidas, etc.)
 
     // Calcular total del pedido
     const orderTotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    
+
     const newOrder = {
       id: `ord-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       tableId,
@@ -346,13 +365,15 @@ io.on('connection', (socket) => {
   // Evento: Corregir un pedido desde el Mostrador (error humano, antes de cobrar).
   // Reemplaza la lista de items completa (permite sacar, cambiar cantidad y agregar).
   // Solo mientras cocina no lo empezó a preparar, para no confundir al cocinero.
-  socket.on('edit-order', ({ orderId, items }) => {
+  socket.on('edit-order', ({ orderId, items: rawItems }) => {
     if (!socket.data.roles?.has('counter')) return;
     const order = orders.find(o => o.id === orderId);
     if (!order || order.archived || order.status !== 'pendiente') return;
 
-    // Si el mostrador saca todos los items, es lo mismo que cancelar el pedido entero.
-    if (!items || items.length === 0) {
+    const items = sanitizeItems(rawItems);
+    // Si el mostrador saca todos los items (o no quedó ninguno válido), es lo mismo
+    // que cancelar el pedido entero.
+    if (items.length === 0) {
       order.status = 'cancelado';
       order.archived = true;
     } else {
