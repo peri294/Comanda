@@ -9,6 +9,10 @@ test('cliente agrega items a un pedido existente', async ({ browser }) => {
   await clientPage.goto('/?view=client&table=1');
   await kitchenPage.goto('/?view=kitchen');
 
+  // Login de cocina (pantalla protegida por contraseña compartida de personal)
+  await kitchenPage.getByPlaceholder('Contraseña').fill('cocina123');
+  await kitchenPage.getByRole('button', { name: /ingresar/i }).click();
+
   await expect(clientPage.getByText('Cargando menú delicioso...')).not.toBeVisible({ timeout: 20000 });
 
   // 1. Pedido inicial: Espresso

@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
-import { ChefHat, Check, Coffee, Play } from 'lucide-react';
+import { ChefHat, Check, Coffee, Play, LogOut } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { createAudioContext, playTone } from '../utils/sound';
 
-export default function KitchenView({ socket }) {
+export default function KitchenView({ socket, token, onLogout }) {
   const [orders, setOrders] = useState([]);
 
   // Fetch initial active orders
   useEffect(() => {
-    fetch('http://localhost:3001/api/initial-state')
+    fetch('http://localhost:3001/api/initial-state', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
       .then(res => res.json())
       .then(data => {
         if (data.orders) {
@@ -17,9 +19,9 @@ export default function KitchenView({ socket }) {
         }
       })
       .catch(err => console.error("Error loading initial kitchen orders:", err));
-  }, []);
+  }, [token]);
 
-  useSocketRoom(socket, 'kitchen');
+  useSocketRoom(socket, 'kitchen', token);
 
   // Listen for socket events
   useEffect(() => {
@@ -100,6 +102,14 @@ export default function KitchenView({ socket }) {
             <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Listos</span>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>{readyOrders.length}</div>
           </div>
+          <button
+            className="btn-secondary"
+            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            onClick={onLogout}
+            title="Cerrar sesión de cocina"
+          >
+            <LogOut size={16} /> Salir
+          </button>
         </div>
       </div>
 

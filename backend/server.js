@@ -2,10 +2,35 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import crypto from 'crypto';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// --- AUTENTICACION DE PERSONAL ---
+// Password compartida por rol (cocina/mostrador), pensada para una tablet compartida
+// por todo el turno, no para trazabilidad por empleado. Sobreescribible por variable
+// de entorno para no dejar las credenciales de demo en un despliegue real.
+const ROLE_PASSWORDS = {
+  kitchen: process.env.KITCHEN_PASSWORD || 'cocina123',
+  counter: process.env.COUNTER_PASSWORD || 'mostrador123'
+};
+
+// Tokens de sesión válidos por rol. En memoria, igual que el resto del estado:
+// se pierden si el server se reinicia (obliga a un nuevo login, no es un bug).
+const validTokens = { kitchen: new Set(), counter: new Set() };
+
+const isStaffToken = (token) => validTokens.kitchen.has(token) || validTokens.counter.has(token);
+
+// Exige un token de staff (cocina o mostrador) vía header "Authorization: Bearer <token>"
+const requireStaffAuth = (req, res, next) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  if (!isStaffToken(token)) {
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+  next();
+};
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -166,8 +191,23 @@ app.get('/api/menu', (req, res) => {
   res.json(MENU);
 });
 
-// Obtener estado inicial de mesas y pedidos activos
-app.get('/api/initial-state', (req, res) => {
+// Login de personal (cocina/mostrador). Devuelve un token de sesión de larga duración
+// que el frontend guarda en localStorage para no pedir contraseña en cada carga.
+app.post('/api/auth/login', (req, res) => {
+  const { role, password } = req.body || {};
+  if (!ROLE_PASSWORDS[role]) {
+    return res.status(400).json({ error: 'Rol inválido' });
+  }
+  if (password !== ROLE_PASSWORDS[role]) {
+    return res.status(401).json({ error: 'Contraseña incorrecta' });
+  }
+  const token = crypto.randomUUID();
+  validTokens[role].add(token);
+  res.json({ token });
+});
+
+// Obtener estado inicial de mesas y pedidos activos (requiere sesión de personal)
+app.get('/api/initial-state', requireStaffAuth, (req, res) => {
   res.json({
     tables,
     // No incluye pedidos de mesas ya cerradas/cobradas. A diferencia del filtro de cocina
@@ -182,11 +222,23 @@ app.get('/api/initial-state', (req, res) => {
 io.on('connection', (socket) => {
   console.log(`Cliente conectado: ${socket.id}`);
 
-  // Unirse a un rol/canal específico
-  socket.on('join', (role) => {
+  // Unirse a un rol/canal específico. 'kitchen' y 'counter' son canales de personal
+  // y requieren un token de sesión válido; 'table-X' es público (lo usa el cliente).
+  socket.on('join', ({ role, token } = {}) => {
+    if (!role) return;
+
+    if (role === 'kitchen' || role === 'counter') {
+      if (!validTokens[role].has(token)) {
+        socket.emit('auth-error', { role });
+        return;
+      }
+      socket.data.roles = socket.data.roles || new Set();
+      socket.data.roles.add(role);
+    }
+
     socket.join(role);
     console.log(`Socket ${socket.id} se unió al canal: ${role}`);
-    
+
     // Si es un cliente de mesa, también se une a su canal específico de mesa
     if (role.startsWith('table-')) {
       const tableId = role.replace('table-', '');
@@ -259,6 +311,7 @@ io.on('connection', (socket) => {
 
   // Evento: Actualizar estado del pedido (desde Cocina)
   socket.on('update-order-status', ({ orderId, status }) => {
+    if (!socket.data.roles?.has('kitchen')) return;
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
     order.status = status;
@@ -294,6 +347,7 @@ io.on('connection', (socket) => {
 
   // Evento: Confirmar cobro y liberar mesa (desde Mostrador/Caja)
   socket.on('close-table', ({ tableId: rawTableId }) => {
+    if (!socket.data.roles?.has('counter')) return;
     const tableId = String(rawTableId);
     const tableIndex = tables.findIndex(t => t.id === tableId);
     if (tableIndex !== -1) {

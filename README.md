@@ -53,6 +53,7 @@ El sistema utiliza una arquitectura cliente-servidor eficiente:
    npm run dev
    ```
 4. **Acceso:** Abrir `http://localhost:5173/` y usar los parámetros de vista (ej. `?view=client`, `?view=kitchen`, `?view=counter`).
+5. **Login de personal:** Las pantallas de Cocina y Mostrador piden una contraseña compartida por rol. Por defecto en desarrollo: `cocina123` (cocina) y `mostrador123` (mostrador). Para un despliegue real, sobreescribilas con las variables de entorno `KITCHEN_PASSWORD` y `COUNTER_PASSWORD` al levantar el backend.
 
 ## 📝 Licencia
 Este proyecto es parte del portfolio de desarrollo de [peri294](https://github.com/peri294).

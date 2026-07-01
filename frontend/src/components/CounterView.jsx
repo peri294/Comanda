@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { createAudioContext, playTone } from '../utils/sound';
 
-export default function CounterView({ socket }) {
+export default function CounterView({ socket, token, onLogout }) {
   const [tables, setTables] = useState([]);
   const [activeOrders, setActiveOrders] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -13,16 +13,18 @@ export default function CounterView({ socket }) {
 
   // Load initial state
   useEffect(() => {
-    fetch('http://localhost:3001/api/initial-state')
+    fetch('http://localhost:3001/api/initial-state', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
       .then(res => res.json())
       .then(data => {
         if (data.tables) setTables(data.tables);
         if (data.orders) setActiveOrders(data.orders);
       })
       .catch(err => console.error("Error fetching initial counter state:", err));
-  }, []);
+  }, [token]);
 
-  useSocketRoom(socket, 'counter');
+  useSocketRoom(socket, 'counter', token);
 
   // Socket event handling
   useEffect(() => {
@@ -150,6 +152,14 @@ export default function CounterView({ socket }) {
             <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Caja del Día</span>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>${dailySales}</div>
           </div>
+          <button
+            className="btn-secondary"
+            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            onClick={onLogout}
+            title="Cerrar sesión de mostrador"
+          >
+            <LogOut size={16} /> Salir
+          </button>
         </div>
       </div>
 

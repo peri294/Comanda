@@ -4,13 +4,17 @@ import { Coffee, Monitor, ChefHat, Volume2, Info, ExternalLink } from 'lucide-re
 import ClientView from './components/ClientView';
 import KitchenView from './components/KitchenView';
 import CounterView from './components/CounterView';
+import StaffLogin from './components/StaffLogin';
 import { createAudioContext, playTone } from './utils/sound';
+import { useStaffAuth } from './hooks/useStaffAuth';
 
 export default function App() {
   const [view, setView] = useState('portal'); // 'portal', 'client', 'kitchen', 'counter'
   const [tableId, setTableId] = useState(null);
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const kitchenAuth = useStaffAuth('kitchen');
+  const counterAuth = useStaffAuth('counter');
 
   // Check URL parameters for routing
   useEffect(() => {
@@ -58,6 +62,21 @@ export default function App() {
       newSocket.close();
     };
   }, []);
+
+  // Si el server rechaza el token de personal (ej. se reinició y perdió las sesiones
+  // en memoria), forzar el login de nuevo en vez de dejar la pantalla sorda a eventos.
+  useEffect(() => {
+    if (!socket) return;
+    const handleAuthError = ({ role }) => {
+      if (role === 'kitchen') kitchenAuth.logout();
+      if (role === 'counter') counterAuth.logout();
+    };
+    socket.on('auth-error', handleAuthError);
+    return () => socket.off('auth-error', handleAuthError);
+    // Se depende de .logout (estable vía useCallback) y no de los objetos kitchenAuth/counterAuth
+    // completos, que son literales nuevos en cada render y harían que este efecto se re-ejecute siempre.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socket, kitchenAuth.logout, counterAuth.logout]);
 
   // Audio test helper
   const testChime = () => {
@@ -139,14 +158,22 @@ export default function App() {
           <ClientView key={tableId} tableId={tableId} socket={socket} />
         )}
 
-        {/* VIEW 2: Kitchen Screen */}
+        {/* VIEW 2: Kitchen Screen (detrás de login de personal) */}
         {view === 'kitchen' && (
-          <KitchenView socket={socket} />
+          kitchenAuth.token ? (
+            <KitchenView socket={socket} token={kitchenAuth.token} onLogout={kitchenAuth.logout} />
+          ) : (
+            <StaffLogin role="kitchen" onLogin={kitchenAuth.login} error={kitchenAuth.error} loading={kitchenAuth.loading} />
+          )
         )}
 
-        {/* VIEW 3: Counter/Manager Dashboard */}
+        {/* VIEW 3: Counter/Manager Dashboard (detrás de login de personal) */}
         {view === 'counter' && (
-          <CounterView socket={socket} />
+          counterAuth.token ? (
+            <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} />
+          ) : (
+            <StaffLogin role="counter" onLogin={counterAuth.login} error={counterAuth.error} loading={counterAuth.loading} />
+          )
         )}
 
         {/* VIEW 4: Simulator Portal */}
