@@ -28,3 +28,15 @@ lerna-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Test artifacts (se regeneran solos al correr los tests)
+/playwright-report/
+/test-results/
+
+# Capturas de debug sueltas
+debug-*.png
+
+# Tooling de agentes/asistentes de desarrollo, no forma parte del producto
+.claude/
+.agents/
+.hermes/
