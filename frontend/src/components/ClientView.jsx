@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Coffee, ShoppingBag, X, Plus, Minus, CreditCard,
   DollarSign, CheckCircle, Clock, ChefHat, Bell
 } from 'lucide-react';
+import { useSocketRoom } from '../hooks/useSocketRoom';
 
 export default function ClientView({ tableId, socket }) {
   const [menu, setMenu] = useState([]);
@@ -49,15 +50,11 @@ export default function ClientView({ tableId, socket }) {
     }
   }, [activeCategory, menu]);
 
+  useSocketRoom(socket, tableId ? `table-${tableId}` : null);
+
   // Socket Connection and Event Listeners
   useEffect(() => {
     if (!socket) return;
-
-    socket.emit('join', `table-${tableId}`);
-    // Si el socket se reconecta (ej. el server se reinicia), hay que re-unirse a la sala
-    // porque Socket.io no restaura la membresía de las salas automáticamente.
-    const rejoinOnReconnect = () => socket.emit('join', `table-${tableId}`);
-    socket.on('connect', rejoinOnReconnect);
 
     socket.on('table-state', (state) => {
       if (state) {
@@ -85,7 +82,6 @@ export default function ClientView({ tableId, socket }) {
     });
 
     return () => {
-      socket.off('connect', rejoinOnReconnect);
       socket.off('table-state');
       socket.off('order-status-changed');
       socket.off('table-closed');

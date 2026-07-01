@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Monitor, CreditCard, DollarSign, Bell, CheckCircle, 
-  Trash2, X, RefreshCw, ShoppingBag, Eye 
-} from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye } from 'lucide-react';
+import { useSocketRoom } from '../hooks/useSocketRoom';
+import { createAudioContext, playTone } from '../utils/sound';
 
 export default function CounterView({ socket }) {
   const [tables, setTables] = useState([]);
@@ -23,15 +22,11 @@ export default function CounterView({ socket }) {
       .catch(err => console.error("Error fetching initial counter state:", err));
   }, []);
 
+  useSocketRoom(socket, 'counter');
+
   // Socket event handling
   useEffect(() => {
     if (!socket) return;
-
-    socket.emit('join', 'counter');
-    // Si el socket se reconecta (ej. el server se reinicia), hay que re-unirse a la sala
-    // porque Socket.io no restaura la membresía de las salas automáticamente.
-    const rejoinOnReconnect = () => socket.emit('join', 'counter');
-    socket.on('connect', rejoinOnReconnect);
 
     // Tables state update
     socket.on('tables-updated', (updatedTables) => {
@@ -73,7 +68,6 @@ export default function CounterView({ socket }) {
     });
 
     return () => {
-      socket.off('connect', rejoinOnReconnect);
       socket.off('tables-updated');
       socket.off('order-received-counter');
       socket.off('bill-requested');
@@ -89,35 +83,13 @@ export default function CounterView({ socket }) {
   // Sound Synth Synthesizer
   const playNotificationSound = (type = 'success') => {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      
+      const ctx = createAudioContext();
       if (type === 'alert') {
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        gain.gain.setValueAtTime(0.15, ctx.currentTime);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.15);
-        
-        const osc2 = ctx.createOscillator();
-        const gain2 = ctx.createGain();
-        osc2.connect(gain2);
-        gain2.connect(ctx.destination);
-        osc2.type = 'sine';
-        osc2.frequency.setValueAtTime(1046.5, ctx.currentTime + 0.2);
-        gain2.gain.setValueAtTime(0.15, ctx.currentTime + 0.2);
-        osc2.start(ctx.currentTime + 0.2);
-        osc2.stop(ctx.currentTime + 0.35);
+        playTone(ctx, { freq: 880, duration: 0.15 });
+        playTone(ctx, { freq: 1046.5, at: 0.2, duration: 0.15 });
       } else {
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
-        gain.gain.setValueAtTime(0.15, ctx.currentTime);
-        osc.start();
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-        osc.stop(ctx.currentTime + 0.5);
+        const gainNode = playTone(ctx, { freq: 587.33, duration: 0.5 });
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
       }
     } catch (e) {
       console.log("Audio API not allowed/error:", e);

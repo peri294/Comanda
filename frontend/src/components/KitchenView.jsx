@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { ChefHat, Clock, Check, Coffee, Play } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ChefHat, Check, Coffee, Play } from 'lucide-react';
+import { useSocketRoom } from '../hooks/useSocketRoom';
+import { createAudioContext, playTone } from '../utils/sound';
 
 export default function KitchenView({ socket }) {
   const [orders, setOrders] = useState([]);
@@ -17,15 +19,11 @@ export default function KitchenView({ socket }) {
       .catch(err => console.error("Error loading initial kitchen orders:", err));
   }, []);
 
+  useSocketRoom(socket, 'kitchen');
+
   // Listen for socket events
   useEffect(() => {
     if (!socket) return;
-
-    socket.emit('join', 'kitchen');
-    // Si el socket se reconecta (ej. el server se reinicia), hay que re-unirse a la sala
-    // porque Socket.io no restaura la membresía de las salas automáticamente.
-    const rejoinOnReconnect = () => socket.emit('join', 'kitchen');
-    socket.on('connect', rejoinOnReconnect);
 
     // Received a new order
     socket.on('order-received', (newOrder) => {
@@ -44,7 +42,6 @@ export default function KitchenView({ socket }) {
     });
 
     return () => {
-      socket.off('connect', rejoinOnReconnect);
       socket.off('order-received');
       socket.off('orders-updated');
     };
@@ -53,18 +50,9 @@ export default function KitchenView({ socket }) {
   // Audio chime specifically for kitchen
   const playKitchenSound = () => {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      osc.start();
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-      osc.stop(ctx.currentTime + 0.6);
+      const ctx = createAudioContext();
+      const gainNode = playTone(ctx, { freq: 659.25, type: 'triangle', gain: 0.2, duration: 0.6 }); // E5
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
     } catch (e) {
       console.log("Audio play error", e);
     }

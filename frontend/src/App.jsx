@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
-import { Coffee, Monitor, ChefHat, Play, Volume2, Info, ExternalLink } from 'lucide-react';
+import { Coffee, Monitor, ChefHat, Volume2, Info, ExternalLink } from 'lucide-react';
 import ClientView from './components/ClientView';
 import KitchenView from './components/KitchenView';
 import CounterView from './components/CounterView';
+import { createAudioContext, playTone } from './utils/sound';
 
 export default function App() {
   const [view, setView] = useState('portal'); // 'portal', 'client', 'kitchen', 'counter'
@@ -61,18 +62,9 @@ export default function App() {
   // Audio test helper
   const testChime = () => {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-      gain.gain.setValueAtTime(0.1, ctx.currentTime);
-      osc.start();
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-      osc.stop(ctx.currentTime + 0.4);
+      const ctx = createAudioContext();
+      const gainNode = playTone(ctx, { freq: 523.25, gain: 0.1, duration: 0.4 }); // C5
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
     } catch (e) {
       alert("Por favor habilita el audio interactuando con la página primero.");
     }
