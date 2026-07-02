@@ -6,7 +6,8 @@ test('cliente agrega items a un pedido existente', async ({ browser }) => {
   const kitchenContext = await browser.newContext();
   const kitchenPage = await kitchenContext.newPage();
 
-  await clientPage.goto('/?view=client&table=1');
+  // Mesa distinta a e2e.spec.js: si Playwright corre los specs en paralelo, no se pisan.
+  await clientPage.goto('/?view=client&table=2');
   await kitchenPage.goto('/?view=kitchen');
 
   // Login de cocina (pantalla protegida por contraseña compartida de personal)
@@ -29,8 +30,6 @@ test('cliente agrega items a un pedido existente', async ({ browser }) => {
   // Abrir carrito y buscar botón de "Actualizar pedido"
   await clientPage.locator('.cart-float-btn').click();
   const updateBtn = clientPage.getByRole('button', { name: /actualizar pedido/i });
-  
-  // Esto fallará porque el botón no existe
   await expect(updateBtn).toBeVisible();
   await updateBtn.click();
   

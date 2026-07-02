@@ -171,6 +171,13 @@ body {
   color: var(--text-primary);
 }
 
+.btn-primary:disabled,
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .btn-danger {
   background: rgba(231, 111, 81, 0.15);
   color: #ff8b72;

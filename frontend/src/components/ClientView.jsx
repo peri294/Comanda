@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Coffee, ShoppingBag, X, Plus, Minus, CreditCard,
-  DollarSign, CheckCircle, Clock, ChefHat, Bell
+  DollarSign, CheckCircle, Clock, ChefHat, Bell, Hand, Receipt, ChevronUp, ChevronDown
 } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 
@@ -23,8 +23,12 @@ export default function ClientView({ tableId, socket }) {
     total: 0
   });
 
-  const [activeOrder, setActiveOrder] = useState(null);
+  // Todos los pedidos de la mesa en la sesión actual, indexados por id (no solo el último),
+  // para poder armar "Mi Cuenta Parcial" con el desglose completo.
+  const [orders, setOrders] = useState({});
+  const [showPartialBill, setShowPartialBill] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [assistanceRequested, setAssistanceRequested] = useState(false);
 
   // Fetch Menu
   useEffect(() => {
@@ -64,14 +68,15 @@ export default function ClientView({ tableId, socket }) {
 
     socket.on('order-status-changed', (order) => {
       if (order && order.tableId === tableId) {
-        setActiveOrder(order);
+        setOrders(prev => ({ ...prev, [order.id]: order }));
       }
     });
 
     socket.on('table-closed', () => {
       setCart([]);
-      setActiveOrder(null);
+      setOrders({});
       setNotes('');
+      setAssistanceRequested(false);
       setTableState({
         id: tableId,
         status: 'libre',
@@ -81,12 +86,26 @@ export default function ClientView({ tableId, socket }) {
       });
     });
 
+    socket.on('assistance-resolved', () => {
+      setAssistanceRequested(false);
+    });
+
     return () => {
       socket.off('table-state');
       socket.off('order-status-changed');
       socket.off('table-closed');
+      socket.off('assistance-resolved');
     };
   }, [socket, tableId]);
+
+  // Llamar al mozo. El botón se rehabilita cuando el mostrador confirma (assistance-resolved)
+  // o, como respaldo local, a los 60s (igual al cooldown del servidor) si ese evento se pierde.
+  const callWaiter = () => {
+    if (assistanceRequested) return;
+    socket.emit('request-assistance', { tableId });
+    setAssistanceRequested(true);
+    setTimeout(() => setAssistanceRequested(false), 60000);
+  };
 
   // Add item to cart
   const addToCart = (product) => {
@@ -116,6 +135,16 @@ export default function ClientView({ tableId, socket }) {
 
   // Cart total
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+  // El pedido "actual" es el que apunta la mesa en el backend (tableState.currentOrderId),
+  // derivado de la colección completa en vez de guardarse aparte.
+  const activeOrder = orders[tableState.currentOrderId] || null;
+
+  // Todos los pedidos que todavía cuentan para el total de la mesa (ni cancelados ni
+  // ya cobrados), para el desglose de "Mi Cuenta Parcial".
+  const partialBillOrders = Object.values(orders)
+    .filter(o => !o.archived)
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
   // An order can still receive extra items only while it hasn't been delivered/cancelled
   const canMergeIntoActiveOrder = activeOrder && activeOrder.status !== 'entregado' && activeOrder.status !== 'cancelado';
@@ -199,6 +228,17 @@ export default function ClientView({ tableId, socket }) {
             </span>
           </div>
         )}
+
+        <div style={{ marginTop: '16px' }}>
+          <button
+            className="btn-secondary"
+            style={{ padding: '8px 16px', fontSize: '0.85rem', margin: '0 auto' }}
+            onClick={callWaiter}
+            disabled={assistanceRequested}
+          >
+            <Hand size={14} /> {assistanceRequested ? 'Mozo en camino...' : 'Llamar al Mozo'}
+          </button>
+        </div>
       </div>
 
       {/* Dynamic Status Dashboard for Active Order */}
@@ -244,6 +284,47 @@ export default function ClientView({ tableId, socket }) {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Mi Cuenta Parcial: desglose colapsable de todo lo pedido en la sesión actual */}
+      {partialBillOrders.length > 0 && (
+        <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: '24px' }}>
+          <button
+            onClick={() => setShowPartialBill(v => !v)}
+            style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
+              background: 'none', border: 'none', color: 'var(--text-primary)', cursor: 'pointer',
+              padding: 0, fontFamily: 'var(--font-main)'
+            }}
+          >
+            <span style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Receipt size={16} style={{ color: 'var(--accent-gold)' }} /> Mi Cuenta Parcial
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
+              ${tableState.total} {showPartialBill ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </span>
+          </button>
+
+          {showPartialBill && (
+            <div style={{ marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
+              {partialBillOrders.map((order, orderIdx) => (
+                <div key={order.id} style={{ marginBottom: '12px' }}>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Pedido {orderIdx + 1}</p>
+                  {order.items.map((item, idx) => (
+                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', padding: '4px 0' }}>
+                      <span>{item.quantity}x {item.name}</span>
+                      <span>${item.price * item.quantity}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-color)' }}>
+                <span>Total:</span>
+                <span style={{ color: 'var(--accent-gold)' }}>${tableState.total}</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

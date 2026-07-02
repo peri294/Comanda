@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2 } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { createAudioContext, playTone } from '../utils/sound';
 
@@ -19,6 +19,9 @@ export default function CounterView({ socket, token, onLogout }) {
   const [editItems, setEditItems] = useState([]);
   const [itemToAdd, setItemToAdd] = useState('');
 
+  // Mesas que llamaron al mozo y todavía no fueron atendidas
+  const [assistanceRequests, setAssistanceRequests] = useState([]);
+
   // Load initial state
   useEffect(() => {
     fetch('http://localhost:3001/api/initial-state', {
@@ -28,6 +31,7 @@ export default function CounterView({ socket, token, onLogout }) {
       .then(data => {
         if (data.tables) setTables(data.tables);
         if (data.orders) setActiveOrders(data.orders);
+        if (data.assistanceRequests) setAssistanceRequests(data.assistanceRequests);
       })
       .catch(err => console.error("Error fetching initial counter state:", err));
   }, [token]);
@@ -85,13 +89,36 @@ export default function CounterView({ socket, token, onLogout }) {
       setActiveOrders(updatedOrders);
     });
 
+    // Una mesa llamó al mozo
+    socket.on('assistance-requested', ({ tableId, timestamp }) => {
+      setAssistanceRequests(prev => {
+        if (prev.find(a => a.tableId === tableId)) return prev;
+        return [...prev, { tableId, timestamp }];
+      });
+
+      addNotification({
+        id: Date.now(),
+        type: 'assistance',
+        title: 'Llamado de mesa',
+        message: `Mesa ${tableId} pidió asistencia.`,
+        time: new Date().toLocaleTimeString()
+      });
+      playNotificationSound('assistance');
+    });
+
     return () => {
       socket.off('tables-updated');
       socket.off('order-received-counter');
       socket.off('bill-requested');
       socket.off('orders-updated');
+      socket.off('assistance-requested');
     };
   }, [socket]);
+
+  const resolveAssistance = (tableId) => {
+    socket.emit('resolve-assistance', { tableId });
+    setAssistanceRequests(prev => prev.filter(a => a.tableId !== tableId));
+  };
 
   // Push notification helper
   const addNotification = (notif) => {
@@ -105,6 +132,11 @@ export default function CounterView({ socket, token, onLogout }) {
       if (type === 'alert') {
         playTone(ctx, { freq: 880, duration: 0.15 });
         playTone(ctx, { freq: 1046.5, at: 0.2, duration: 0.15 });
+      } else if (type === 'assistance') {
+        // Distinto del de "cuenta solicitada": tres golpes iguales, no dos tonos ascendentes
+        playTone(ctx, { freq: 740, type: 'triangle', gain: 0.18, duration: 0.12 });
+        playTone(ctx, { freq: 740, type: 'triangle', gain: 0.18, at: 0.18, duration: 0.12 });
+        playTone(ctx, { freq: 740, type: 'triangle', gain: 0.18, at: 0.36, duration: 0.18 });
       } else {
         const gainNode = playTone(ctx, { freq: 587.33, duration: 0.5 });
         gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
@@ -321,6 +353,33 @@ export default function CounterView({ socket, token, onLogout }) {
         {/* Sidebar: Activity and Notifications */}
         <div>
           <div className="glass-panel" style={{ padding: '20px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+
+            {assistanceRequests.length > 0 && (
+              <div style={{ marginBottom: '20px' }}>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                  <Hand size={18} style={{ color: 'var(--danger)' }} /> Mesas que piden ayuda
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {assistanceRequests.map(req => (
+                    <div key={req.tableId} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '10px 12px', borderRadius: '10px',
+                      background: 'rgba(231, 111, 81, 0.1)', border: '1px solid rgba(231, 111, 81, 0.3)'
+                    }}>
+                      <span style={{ fontWeight: 700, color: 'var(--danger)' }}>Mesa {req.tableId}</span>
+                      <button
+                        className="btn-secondary"
+                        style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                        onClick={() => resolveAssistance(req.tableId)}
+                      >
+                        <Check size={12} /> Atendida
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <h3 style={{ fontSize: '1.1rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
               <Bell size={18} style={{ color: 'var(--accent-gold)' }} /> Alertas Recientes
             </h3>

@@ -25,5 +25,7 @@ test('cliente realiza un pedido y aparece en cocina', async ({ browser }) => {
   await clientPage.locator('.cart-float-btn').click();
   await clientPage.getByRole('button', { name: /confirmar y enviar pedido/i }).click();
 
-  await expect(kitchenPage.getByText('Espresso Italiano')).toBeVisible({ timeout: 15000 });
+  // .first(): otros specs pueden correr en paralelo y también tener "Espresso Italiano"
+  // en otra mesa, lo cual es un estado legítimo de cocina, no un bug.
+  await expect(kitchenPage.getByText('Espresso Italiano').first()).toBeVisible({ timeout: 15000 });
 });

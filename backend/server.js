@@ -54,6 +54,13 @@ const INITIAL_TABLES = Array.from({ length: 12 }, (_, i) => ({
 let tables = JSON.parse(JSON.stringify(INITIAL_TABLES));
 let orders = [];
 
+// Solicitudes de "Llamar al Mozo" activas, indexadas por mesa: { timestamp, resolved, resolvedAt }.
+// Mientras sigue sin atender, se bloquea cualquier duplicado sin importar el tiempo transcurrido.
+// Una vez atendida, solo se aplica un cooldown corto (medido desde que se resolvió, no desde el
+// pedido original) para evitar un doble-click accidental, sin bloquear un pedido de ayuda legítimo.
+const activeAssistanceRequests = new Map();
+const ASSISTANCE_REOPEN_COOLDOWN_MS = 10_000;
+
 // Menú de la cafetería
 const MENU = [
   {
@@ -242,9 +249,27 @@ app.get('/api/initial-state', requireStaffAuth, (req, res) => {
     // No incluye pedidos de mesas ya cerradas/cobradas. A diferencia del filtro de cocina
     // (status !== 'entregado'), esto SÍ incluye pedidos ya servidos pero aún no pagados,
     // que el mostrador necesita mostrar en el ticket. KitchenView aplica su propio filtro extra.
-    orders: orders.filter(o => !o.archived)
+    orders: orders.filter(o => !o.archived),
+    // Para que un mostrador que recién se loguea (o recargó la página) vea los llamados
+    // que quedaron sin atender mientras no estaba conectado, no solo los que lleguen a partir de ahora.
+    assistanceRequests: Array.from(activeAssistanceRequests.entries())
+      .filter(([, req]) => !req.resolved)
+      .map(([tableId, req]) => ({ tableId, timestamp: req.timestamp }))
   });
 });
+
+// Solo para los tests E2E: vuelve el estado en memoria a como arranca el server
+// (mesas libres, sin pedidos ni llamados de asistencia). No toca las sesiones de
+// personal logueadas. No existe si NODE_ENV=production, para no exponerlo en un
+// despliegue real.
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/api/test/reset', (req, res) => {
+    tables = JSON.parse(JSON.stringify(INITIAL_TABLES));
+    orders = [];
+    activeAssistanceRequests.clear();
+    res.json({ ok: true });
+  });
+}
 
 // --- WEBSOCKETS (SOCKET.IO) ---
 
@@ -272,6 +297,13 @@ io.on('connection', (socket) => {
     if (role.startsWith('table-')) {
       const tableId = role.replace('table-', '');
       socket.emit('table-state', findTable(tableId));
+      // Hidratar todos los pedidos activos de la mesa (no solo el último), para que el
+      // cliente pueda armar "Mi Cuenta Parcial" aunque recién esté entrando/recargando
+      // la página con pedidos ya en curso. Reutiliza el mismo evento que usan las
+      // actualizaciones en vivo, así el cliente no necesita un handler distinto.
+      orders
+        .filter(o => o.tableId === tableId && !o.archived)
+        .forEach(o => socket.emit('order-status-changed', o));
     }
   });
 
@@ -419,6 +451,39 @@ io.on('connection', (socket) => {
     io.to(`table-${tableId}`).emit('table-state', table);
   });
 
+  // Evento: Llamar al mozo (desde Cliente). Protegido en el servidor, no solo en la UI:
+  // se rechaza si la mesa ya tiene una solicitud sin atender (sin importar el tiempo que
+  // pasó), o si se resolvió hace menos de ASSISTANCE_REOPEN_COOLDOWN_MS (evita doble-click
+  // apenas se habilita el botón, sin bloquear un segundo pedido de ayuda legítimo).
+  socket.on('request-assistance', ({ tableId: rawTableId }) => {
+    const tableId = String(rawTableId);
+    if (!findTable(tableId)) return;
+
+    const existing = activeAssistanceRequests.get(tableId);
+    const now = Date.now();
+    if (existing) {
+      if (!existing.resolved) return;
+      if (now - existing.resolvedAt < ASSISTANCE_REOPEN_COOLDOWN_MS) return;
+    }
+
+    activeAssistanceRequests.set(tableId, { timestamp: now, resolved: false, resolvedAt: null });
+    io.to('counter').emit('assistance-requested', { tableId, timestamp: now });
+  });
+
+  // Evento: Marcar una solicitud de asistencia como atendida (desde Mostrador)
+  socket.on('resolve-assistance', ({ tableId: rawTableId }) => {
+    if (!socket.data.roles?.has('counter')) return;
+    const tableId = String(rawTableId);
+
+    const existing = activeAssistanceRequests.get(tableId);
+    if (existing) {
+      existing.resolved = true;
+      existing.resolvedAt = Date.now();
+    }
+
+    io.to(`table-${tableId}`).emit('assistance-resolved');
+  });
+
   // Evento: Confirmar cobro y liberar mesa (desde Mostrador/Caja)
   socket.on('close-table', ({ tableId: rawTableId }) => {
     if (!socket.data.roles?.has('counter')) return;
@@ -441,6 +506,7 @@ io.on('connection', (socket) => {
         paymentMethod: null,
         total: 0
       };
+      activeAssistanceRequests.delete(tableId);
 
       // Notificar a mostrador, cocina y a la mesa correspondiente
       broadcastTables();
