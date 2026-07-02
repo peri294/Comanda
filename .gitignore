@@ -8,6 +8,9 @@ dist/
 build/
 out/
 
+# Base de datos SQLite (estado local de mesas/pedidos, no va al repo)
+/backend/data/
+
 # Environment variables
 .env
 .env.local

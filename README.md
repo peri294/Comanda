@@ -35,11 +35,12 @@ El sistema utiliza una arquitectura cliente-servidor eficiente:
 ## 🛠️ Stack Tecnológico
 - **Frontend:** React (Vite), CSS Custom.
 - **Backend:** Node.js, Express, Socket.io.
+- **Persistencia:** SQLite embebido (módulo `node:sqlite`, sin dependencias externas) — mesas y pedidos sobreviven a un reinicio del servidor.
 - **Comunicación:** WebSockets para baja latencia.
 
 ## 💻 Guía de Ejecución
 
-1. **Requisitos:** Tener instalado [Node.js](https://nodejs.org/).
+1. **Requisitos:** Tener instalado [Node.js](https://nodejs.org/) **22.13 o superior** (el backend usa el módulo `node:sqlite` incluido en Node para persistir mesas y pedidos, sin dependencias nativas).
 2. **Backend:**
    ```bash
    cd backend

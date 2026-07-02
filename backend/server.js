@@ -3,6 +3,15 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import crypto from 'crypto';
+import {
+  loadState,
+  persistTable,
+  persistOrder,
+  persistAssistance,
+  deleteAssistance,
+  resetState,
+  runInTransaction
+} from './db.js';
 
 const app = express();
 app.use(cors());
@@ -17,8 +26,10 @@ const ROLE_PASSWORDS = {
   counter: process.env.COUNTER_PASSWORD || 'mostrador123'
 };
 
-// Tokens de sesión válidos por rol. En memoria, igual que el resto del estado:
-// se pierden si el server se reinicia (obliga a un nuevo login, no es un bug).
+// Tokens de sesión válidos por rol. Se quedan en memoria a propósito (a diferencia
+// de mesas/pedidos, que se persisten en SQLite): son sesiones de tablet de turno,
+// re-loguearse tras un restart no es pérdida de datos, y guardar tokens de sesión
+// en disco sería un riesgo de seguridad innecesario para este alcance.
 const validTokens = { kitchen: new Set(), counter: new Set() };
 
 const isStaffToken = (token) => validTokens.kitchen.has(token) || validTokens.counter.has(token);
@@ -40,9 +51,9 @@ const io = new Server(httpServer, {
   }
 });
 
-// --- BASE DE DATOS EN MEMORIA ---
+// --- ESTADO DE TRABAJO (en memoria, respaldado por SQLite) ---
 
-// Generar 12 mesas
+// Semilla del primer arranque: 12 mesas libres
 const INITIAL_TABLES = Array.from({ length: 12 }, (_, i) => ({
   id: String(i + 1),
   status: 'libre', // 'libre' | 'pedido_pendiente' | 'comiendo' | 'esperando_cuenta' | 'pagando_tarjeta'
@@ -51,14 +62,18 @@ const INITIAL_TABLES = Array.from({ length: 12 }, (_, i) => ({
   total: 0
 }));
 
-let tables = JSON.parse(JSON.stringify(INITIAL_TABLES));
-let orders = [];
+// Las lecturas y la lógica de negocio operan sobre estas estructuras en memoria;
+// cada mutación se refleja en SQLite (write-through, ver db.js), así un restart
+// del server ya no borra las mesas y pedidos en curso.
+const persistedState = loadState(INITIAL_TABLES);
+let tables = persistedState.tables;
+let orders = persistedState.orders;
 
 // Solicitudes de "Llamar al Mozo" activas, indexadas por mesa: { timestamp, resolved, resolvedAt }.
 // Mientras sigue sin atender, se bloquea cualquier duplicado sin importar el tiempo transcurrido.
 // Una vez atendida, solo se aplica un cooldown corto (medido desde que se resolvió, no desde el
 // pedido original) para evitar un doble-click accidental, sin bloquear un pedido de ayuda legítimo.
-const activeAssistanceRequests = new Map();
+const activeAssistanceRequests = persistedState.assistanceRequests;
 const ASSISTANCE_REOPEN_COOLDOWN_MS = 10_000;
 
 // Menú de la cafetería
@@ -258,15 +273,16 @@ app.get('/api/initial-state', requireStaffAuth, (req, res) => {
   });
 });
 
-// Solo para los tests E2E: vuelve el estado en memoria a como arranca el server
-// (mesas libres, sin pedidos ni llamados de asistencia). No toca las sesiones de
-// personal logueadas. No existe si NODE_ENV=production, para no exponerlo en un
-// despliegue real.
+// Solo para los tests E2E: vuelve el estado (memoria y SQLite, incluido el historial
+// de pedidos archivados) a como queda un primer arranque: mesas libres, sin pedidos
+// ni llamados de asistencia. No toca las sesiones de personal logueadas. No existe
+// si NODE_ENV=production, para no exponerlo en un despliegue real.
 if (process.env.NODE_ENV !== 'production') {
   app.post('/api/test/reset', (req, res) => {
     tables = JSON.parse(JSON.stringify(INITIAL_TABLES));
     orders = [];
     activeAssistanceRequests.clear();
+    resetState(INITIAL_TABLES);
     res.json({ ok: true });
   });
 }
@@ -328,6 +344,11 @@ io.on('connection', (socket) => {
     const table = findTable(order.tableId);
     if (table && paymentMethod) table.paymentMethod = paymentMethod;
 
+    runInTransaction(() => {
+      persistOrder(order);
+      if (table) persistTable(table);
+    });
+
     broadcastOrders();
     broadcastTables();
     io.to(`table-${order.tableId}`).emit('order-status-changed', order);
@@ -365,6 +386,11 @@ io.on('connection', (socket) => {
       if (paymentMethod) table.paymentMethod = paymentMethod;
     }
 
+    runInTransaction(() => {
+      persistOrder(newOrder);
+      if (table) persistTable(table);
+    });
+
     // Notificar a cocina, mostrador y a la mesa correspondiente
     io.to('kitchen').emit('order-received', newOrder);
     io.to('counter').emit('order-received-counter', newOrder);
@@ -386,6 +412,11 @@ io.on('connection', (socket) => {
       if (status === 'en_preparacion') table.status = 'pedido_pendiente'; // Sigue pendiente/preparando
       else if (status === 'entregado') table.status = 'comiendo';
     }
+
+    runInTransaction(() => {
+      persistOrder(order);
+      if (table) persistTable(table);
+    });
 
     // Notificar a todos los canales relevantes
     broadcastOrders();
@@ -413,6 +444,13 @@ io.on('connection', (socket) => {
     }
 
     recomputeTableTotal(order.tableId);
+
+    runInTransaction(() => {
+      persistOrder(order);
+      const table = findTable(order.tableId);
+      if (table) persistTable(table);
+    });
+
     broadcastOrders();
     broadcastTables();
     io.to(`table-${order.tableId}`).emit('order-status-changed', order);
@@ -430,6 +468,13 @@ io.on('connection', (socket) => {
     order.archived = true;
 
     recomputeTableTotal(order.tableId);
+
+    runInTransaction(() => {
+      persistOrder(order);
+      const table = findTable(order.tableId);
+      if (table) persistTable(table);
+    });
+
     broadcastOrders();
     broadcastTables();
     io.to(`table-${order.tableId}`).emit('order-status-changed', order);
@@ -444,6 +489,7 @@ io.on('connection', (socket) => {
 
     table.status = paymentMethod === 'efectivo' ? 'esperando_cuenta' : 'pagando_tarjeta';
     table.paymentMethod = paymentMethod;
+    persistTable(table);
 
     // Notificar a mostrador y al cliente de la mesa
     broadcastTables();
@@ -466,7 +512,9 @@ io.on('connection', (socket) => {
       if (now - existing.resolvedAt < ASSISTANCE_REOPEN_COOLDOWN_MS) return;
     }
 
-    activeAssistanceRequests.set(tableId, { timestamp: now, resolved: false, resolvedAt: null });
+    const request = { timestamp: now, resolved: false, resolvedAt: null };
+    activeAssistanceRequests.set(tableId, request);
+    persistAssistance(tableId, request);
     io.to('counter').emit('assistance-requested', { tableId, timestamp: now });
   });
 
@@ -479,6 +527,7 @@ io.on('connection', (socket) => {
     if (existing) {
       existing.resolved = true;
       existing.resolvedAt = Date.now();
+      persistAssistance(tableId, existing);
     }
 
     io.to(`table-${tableId}`).emit('assistance-resolved');
@@ -491,10 +540,12 @@ io.on('connection', (socket) => {
     const tableIndex = tables.findIndex(t => t.id === tableId);
     if (tableIndex !== -1) {
       // Marcar todos los pedidos de esa mesa como entregados y archivados (mesa cobrada)
+      const closedOrders = [];
       orders.forEach(o => {
         if (o.tableId === tableId) {
           o.status = 'entregado';
           o.archived = true;
+          closedOrders.push(o);
         }
       });
 
@@ -507,6 +558,12 @@ io.on('connection', (socket) => {
         total: 0
       };
       activeAssistanceRequests.delete(tableId);
+
+      runInTransaction(() => {
+        closedOrders.forEach(persistOrder);
+        persistTable(tables[tableIndex]);
+        deleteAssistance(tableId);
+      });
 
       // Notificar a mostrador, cocina y a la mesa correspondiente
       broadcastTables();
