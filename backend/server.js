@@ -12,7 +12,8 @@ import {
   deleteTable,
   resetState,
   runInTransaction,
-  getDailySalesTotal
+  getDailySalesTotal,
+  closeRegister
 } from './db.js';
 
 const app = express();
@@ -641,6 +642,17 @@ io.on('connection', (socket) => {
       io.to(`table-${tableId}`).emit('table-closed');
       io.to(`table-${tableId}`).emit('table-state', tables[tableIndex]);
     }
+  });
+
+  // Evento: Cerrar la caja (desde Mostrador). Registra un cierre en el histórico con
+  // lo cobrado desde el cierre anterior y la caja arranca de nuevo en $0. No exige
+  // mesas libres: lo que se cobre después del cierre cuenta para la caja siguiente,
+  // así una mesa que se queda hasta tarde no bloquea el arqueo del turno.
+  socket.on('close-register', () => {
+    if (!socket.data.roles?.has('counter')) return;
+    const closure = closeRegister();
+    io.to('counter').emit('register-closed', closure);
+    io.to('counter').emit('daily-sales-updated', getDailySalesTotal());
   });
 
   socket.on('disconnect', () => {

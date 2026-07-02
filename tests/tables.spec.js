@@ -48,12 +48,22 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   await counterPage.reload();
   await expect(cajaPanel.getByText('$1800')).toBeVisible({ timeout: 15000 });
 
-  // 6. DAR DE BAJA LA MESA
+  // 6. CERRAR CAJA: queda registrado el cierre y la caja arranca de nuevo en $0
+  counterPage.once('dialog', dialog => dialog.accept());
+  await counterPage.getByRole('button', { name: /cerrar caja/i }).click();
+  await expect(cajaPanel.getByText('$0')).toBeVisible({ timeout: 10000 });
+  await expect(counterPage.getByText('Caja cerrada')).toBeVisible();
+  await expect(counterPage.getByText('Cierre por $1800 (1 pedido cobrado).')).toBeVisible();
+  // El cierre también persiste: tras recargar, la caja sigue en $0 (no vuelve a $1800)
+  await counterPage.reload();
+  await expect(cajaPanel.getByText('$0')).toBeVisible({ timeout: 15000 });
+
+  // 7. DAR DE BAJA LA MESA
   counterPage.once('dialog', dialog => dialog.accept());
   await mesa13.getByTitle('Dar de baja la Mesa 13').click();
   await expect(mesa13).toHaveCount(0, { timeout: 10000 });
 
-  // 7. EL QR VIEJO QUEDA BLOQUEADO PARA EL CLIENTE
+  // 8. EL QR VIEJO QUEDA BLOQUEADO PARA EL CLIENTE
   // El cliente que estaba mirando la mesa recibe el aviso en vivo (table-removed)...
   await expect(clientPage.getByText('Esta mesa no está disponible')).toBeVisible({ timeout: 10000 });
   // ...y quien entra de cero con ese QR también la ve como no disponible (join responde null)

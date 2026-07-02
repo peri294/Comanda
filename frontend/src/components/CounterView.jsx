@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { createAudioContext, playTone } from '../utils/sound';
 
@@ -98,6 +98,18 @@ export default function CounterView({ socket, token, onLogout }) {
       setDailySales(total);
     });
 
+    // Alguien cerró la caja (puede haber sido otra pestaña/tablet de mostrador)
+    socket.on('register-closed', ({ total, ordersCount }) => {
+      addNotification({
+        id: Date.now(),
+        type: 'register_closed',
+        title: 'Caja cerrada',
+        message: `Cierre por $${total} (${ordersCount} ${ordersCount === 1 ? 'pedido cobrado' : 'pedidos cobrados'}).`,
+        time: new Date().toLocaleTimeString()
+      });
+      playNotificationSound('success');
+    });
+
     // Una mesa llamó al mozo
     socket.on('assistance-requested', ({ tableId, timestamp }) => {
       setAssistanceRequests(prev => {
@@ -121,6 +133,7 @@ export default function CounterView({ socket, token, onLogout }) {
       socket.off('bill-requested');
       socket.off('orders-updated');
       socket.off('daily-sales-updated');
+      socket.off('register-closed');
       socket.off('assistance-requested');
     };
   }, [socket]);
@@ -241,6 +254,13 @@ export default function CounterView({ socket, token, onLogout }) {
     socket.emit('remove-table', { tableId });
   };
 
+  // Cierre de caja: el server sella el total real desde el cierre anterior; el monto
+  // del confirm es informativo (lo que muestra la pantalla en este momento).
+  const handleCloseRegister = () => {
+    if (!window.confirm(`¿Cerrar la caja? Se registrará un cierre por $${dailySales} y la caja arranca de nuevo en $0.`)) return;
+    socket.emit('close-register');
+  };
+
   // Mesa y pedidos seleccionados, derivados en vivo (no una copia congelada al abrir el modal)
   const selectedTable = selectedTableId ? tables.find(t => t.id === selectedTableId) : null;
   const selectedTableOrders = selectedTableId
@@ -276,6 +296,14 @@ export default function CounterView({ socket, token, onLogout }) {
             <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Caja del Día</span>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>${dailySales}</div>
           </div>
+          <button
+            className="btn-secondary"
+            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            onClick={handleCloseRegister}
+            title="Registrar un cierre de caja con lo cobrado hasta ahora"
+          >
+            <Archive size={16} /> Cerrar Caja
+          </button>
           <button
             className="btn-secondary"
             style={{ padding: '10px 16px', fontSize: '0.8rem' }}
@@ -434,11 +462,11 @@ export default function CounterView({ socket, token, onLogout }) {
                   <div key={notif.id} className="glass-panel" style={{ 
                     padding: '12px', 
                     fontSize: '0.85rem', 
-                    borderLeft: `3px solid ${notif.type === 'bill_requested' ? 'var(--danger)' : 'var(--warning)'}`,
+                    borderLeft: `3px solid ${notif.type === 'bill_requested' ? 'var(--danger)' : notif.type === 'register_closed' ? 'var(--success)' : 'var(--warning)'}`,
                     background: 'rgba(255, 255, 255, 0.02)'
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginBottom: '2px' }}>
-                      <span style={{ color: notif.type === 'bill_requested' ? 'var(--danger)' : 'var(--warning)' }}>{notif.title}</span>
+                      <span style={{ color: notif.type === 'bill_requested' ? 'var(--danger)' : notif.type === 'register_closed' ? 'var(--success)' : 'var(--warning)' }}>{notif.title}</span>
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{notif.time}</span>
                     </div>
                     <p style={{ color: 'var(--text-secondary)' }}>{notif.message}</p>

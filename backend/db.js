@@ -48,6 +48,15 @@ db.exec(`
     resolved    INTEGER NOT NULL DEFAULT 0,
     resolved_at INTEGER
   );
+
+  -- Cierres de caja del mostrador: cada cierre sella cuánto se cobró desde el cierre
+  -- anterior. La "caja actual" siempre se calcula desde el último cierre en adelante.
+  CREATE TABLE IF NOT EXISTS register_closures (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    closed_at    TEXT NOT NULL,
+    total        REAL NOT NULL,
+    orders_count INTEGER NOT NULL
+  );
 `);
 
 // Migración para bases creadas antes de que existiera closed_at (CREATE TABLE IF NOT
@@ -92,6 +101,7 @@ const upsertAssistanceStmt = db.prepare(`
 
 const deleteAssistanceStmt = db.prepare('DELETE FROM assistance_requests WHERE table_id = ?');
 const deleteTableStmt = db.prepare('DELETE FROM tables WHERE id = ?');
+const insertClosureStmt = db.prepare('INSERT INTO register_closures (closed_at, total, orders_count) VALUES (?, ?, ?)');
 
 // --- CONVERSIÓN FILA <-> OBJETO ---
 
@@ -181,23 +191,47 @@ export const loadState = (initialTables) => {
   };
 };
 
-// "Caja del Día": suma de los pedidos efectivamente cobrados hoy. Se filtra por
-// closed_at (momento del cobro, no de la creación del pedido: una mesa que pidió a las
-// 23:50 y pagó a las 00:10 cuenta para el día en que entró la plata) desde la
-// medianoche LOCAL del server (comparar ISO strings funciona porque ordenan
-// lexicográficamente). Los cancelados nunca tienen closed_at, así que quedan afuera.
-// El total se suma en JS desde el JSON de items — son un puñado de filas por día y
-// evita denormalizar un total que pueda divergir de los items.
-export const getDailySalesTotal = () => {
+// Ventas cobradas después de un instante dado. Se filtra por closed_at (momento del
+// cobro, no de la creación del pedido: una mesa que pidió a las 23:50 y pagó a las
+// 00:10 cuenta para la caja en que entró la plata; comparar ISO strings funciona
+// porque ordenan lexicográficamente). Los cancelados nunca tienen closed_at, así que
+// quedan afuera. El total se suma en JS desde el JSON de items — son un puñado de
+// filas por caja y evita denormalizar un total que pueda divergir de los items.
+const salesSince = (sinceIso) => {
+  const rows = db
+    .prepare("SELECT items FROM orders WHERE archived = 1 AND status = 'entregado' AND closed_at > ?")
+    .all(sinceIso);
+  return {
+    total: rows.reduce(
+      (acc, row) => acc + JSON.parse(row.items).reduce((sum, item) => sum + item.price * item.quantity, 0),
+      0
+    ),
+    ordersCount: rows.length
+  };
+};
+
+// La caja actual arranca en el último cierre de caja. Si nunca se cerró la caja, en la
+// medianoche LOCAL del server (el comportamiento previo a que existieran los cierres).
+// Ojo: si el último cierre fue ayer, lo cobrado después de ese cierre cuenta para la
+// caja de hoy — la plata que no entró en un arqueo entra en el siguiente, no se pierde.
+const getRegisterStartIso = () => {
+  const lastClosure = db.prepare('SELECT MAX(closed_at) AS at FROM register_closures').get().at;
+  if (lastClosure) return lastClosure;
   const midnight = new Date();
   midnight.setHours(0, 0, 0, 0);
-  const rows = db
-    .prepare("SELECT items FROM orders WHERE archived = 1 AND status = 'entregado' AND closed_at >= ?")
-    .all(midnight.toISOString());
-  return rows.reduce(
-    (acc, row) => acc + JSON.parse(row.items).reduce((sum, item) => sum + item.price * item.quantity, 0),
-    0
-  );
+  return midnight.toISOString();
+};
+
+// "Caja del Día" que muestra el mostrador: lo cobrado desde el último cierre.
+export const getDailySalesTotal = () => salesSince(getRegisterStartIso()).total;
+
+// Cierre de caja: sella lo cobrado desde el cierre anterior como una fila del
+// histórico y devuelve el resumen. La caja siguiente arranca desde este instante.
+export const closeRegister = () => {
+  const { total, ordersCount } = salesSince(getRegisterStartIso());
+  const closedAt = new Date().toISOString();
+  insertClosureStmt.run(closedAt, total, ordersCount);
+  return { closedAt, total, ordersCount };
 };
 
 // Solo para /api/test/reset: vuelve la base al estado de primer arranque.
@@ -205,7 +239,7 @@ export const getDailySalesTotal = () => {
 // no existe en producción y los tests necesitan un estado 100% limpio.
 export const resetState = (initialTables) => {
   runInTransaction(() => {
-    db.exec('DELETE FROM orders; DELETE FROM assistance_requests; DELETE FROM tables;');
+    db.exec('DELETE FROM orders; DELETE FROM assistance_requests; DELETE FROM register_closures; DELETE FROM tables;');
     initialTables.forEach(persistTable);
   });
 };
