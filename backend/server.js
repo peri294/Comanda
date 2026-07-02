@@ -9,6 +9,7 @@ import {
   persistOrder,
   persistAssistance,
   deleteAssistance,
+  deleteTable,
   resetState,
   runInTransaction
 } from './db.js';
@@ -312,7 +313,9 @@ io.on('connection', (socket) => {
     // Si es un cliente de mesa, también se une a su canal específico de mesa
     if (role.startsWith('table-')) {
       const tableId = role.replace('table-', '');
-      socket.emit('table-state', findTable(tableId));
+      // null explícito si la mesa no existe (QR viejo de una mesa dada de baja):
+      // el cliente lo usa para mostrar "mesa no disponible" en vez de quedarse mudo.
+      socket.emit('table-state', findTable(tableId) || null);
       // Hidratar todos los pedidos activos de la mesa (no solo el último), para que el
       // cliente pueda armar "Mi Cuenta Parcial" aunque recién esté entrando/recargando
       // la página con pedidos ya en curso. Reutiliza el mismo evento que usan las
@@ -358,6 +361,11 @@ io.on('connection', (socket) => {
     // El tableId puede llegar como número o string según cómo navegó el cliente en el frontend;
     // se normaliza a string porque tables[].id siempre es string.
     const tableId = String(orderData.tableId);
+    // La mesa tiene que existir: ahora que se pueden dar de baja mesas, un QR viejo
+    // no puede generar pedidos huérfanos que cocina prepararía para nadie.
+    const table = findTable(tableId);
+    if (!table) return;
+
     const { notes, paymentMethod } = orderData;
     const items = sanitizeItems(orderData.items);
     if (items.length === 0) return; // nada válido para pedir (menú manipulado, cantidades inválidas, etc.)
@@ -378,17 +386,14 @@ io.on('connection', (socket) => {
     orders.push(newOrder);
 
     // Actualizar estado de la mesa
-    const table = findTable(tableId);
-    if (table) {
-      table.status = 'pedido_pendiente';
-      table.currentOrderId = newOrder.id;
-      table.total += orderTotal;
-      if (paymentMethod) table.paymentMethod = paymentMethod;
-    }
+    table.status = 'pedido_pendiente';
+    table.currentOrderId = newOrder.id;
+    table.total += orderTotal;
+    if (paymentMethod) table.paymentMethod = paymentMethod;
 
     runInTransaction(() => {
       persistOrder(newOrder);
-      if (table) persistTable(table);
+      persistTable(table);
     });
 
     // Notificar a cocina, mostrador y a la mesa correspondiente
@@ -531,6 +536,59 @@ io.on('connection', (socket) => {
     }
 
     io.to(`table-${tableId}`).emit('assistance-resolved');
+  });
+
+  // Evento: Agregar una mesa nueva (desde Mostrador). Sin número pedido, se asigna el
+  // más chico sin usar: así reponer una mesa dada de baja reutiliza su QR ya impreso.
+  socket.on('add-table', ({ id } = {}) => {
+    if (!socket.data.roles?.has('counter')) return;
+
+    let tableId;
+    if (id !== undefined && id !== null && String(id).trim() !== '') {
+      // Número puntual: entero positivo, normalizado (sin ceros a la izquierda) y único.
+      const requested = Number(String(id).trim());
+      if (!Number.isInteger(requested) || requested < 1) return;
+      tableId = String(requested);
+      if (findTable(tableId)) return;
+    } else {
+      let n = 1;
+      while (findTable(String(n))) n++;
+      tableId = String(n);
+    }
+
+    const newTable = { id: tableId, status: 'libre', currentOrderId: null, paymentMethod: null, total: 0 };
+    tables.push(newTable);
+    tables.sort((a, b) => Number(a.id) - Number(b.id));
+    persistTable(newTable);
+
+    broadcastTables();
+    // Si alguien ya estaba mirando el QR de ese número, su mesa "revive" al instante.
+    io.to(`table-${tableId}`).emit('table-state', newTable);
+  });
+
+  // Evento: Quitar una mesa (desde Mostrador). Puede quitarse cualquiera —las demás
+  // conservan su número, clave porque los QR impresos apuntan a ?table=X— pero solo si
+  // está libre: sin pedidos activos ni llamados al mozo pendientes. Una mesa ocupada
+  // se cobra/cierra primero; si no, se destruiría consumo en curso sin registro.
+  socket.on('remove-table', ({ tableId: rawTableId } = {}) => {
+    if (!socket.data.roles?.has('counter')) return;
+    const tableId = String(rawTableId);
+    const table = findTable(tableId);
+    if (!table || table.status !== 'libre') return;
+    if (orders.some(o => o.tableId === tableId && !o.archived)) return;
+    const assistance = activeAssistanceRequests.get(tableId);
+    if (assistance && !assistance.resolved) return;
+
+    tables = tables.filter(t => t.id !== tableId);
+    activeAssistanceRequests.delete(tableId);
+    runInTransaction(() => {
+      deleteTable(tableId);
+      deleteAssistance(tableId);
+    });
+
+    broadcastTables();
+    // El QR viejo deja de valer: cualquier cliente mirando esa mesa pasa a "no disponible".
+    io.to(`table-${tableId}`).emit('table-removed');
   });
 
   // Evento: Confirmar cobro y liberar mesa (desde Mostrador/Caja)

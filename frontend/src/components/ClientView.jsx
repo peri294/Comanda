@@ -30,6 +30,10 @@ export default function ClientView({ tableId, socket }) {
   const [loading, setLoading] = useState(true);
   const [assistanceRequested, setAssistanceRequested] = useState(false);
 
+  // La mesa no existe en el backend (QR viejo de una mesa dada de baja, o URL manual
+  // inválida): se bloquea toda la vista en vez de dejar pedir a una mesa fantasma.
+  const [tableUnavailable, setTableUnavailable] = useState(false);
+
   // Fetch Menu
   useEffect(() => {
     fetch('http://localhost:3001/api/menu')
@@ -63,7 +67,19 @@ export default function ClientView({ tableId, socket }) {
     socket.on('table-state', (state) => {
       if (state) {
         setTableState(state);
+        setTableUnavailable(false); // la mesa existe (o volvió a darse de alta)
+      } else {
+        // El backend responde null al unirse a una mesa que no existe
+        setTableUnavailable(true);
       }
+    });
+
+    // La mesa fue dada de baja desde el mostrador mientras la estábamos mirando
+    socket.on('table-removed', () => {
+      setCart([]);
+      setOrders({});
+      setNotes('');
+      setTableUnavailable(true);
     });
 
     socket.on('order-status-changed', (order) => {
@@ -92,6 +108,7 @@ export default function ClientView({ tableId, socket }) {
 
     return () => {
       socket.off('table-state');
+      socket.off('table-removed');
       socket.off('order-status-changed');
       socket.off('table-closed');
       socket.off('assistance-resolved');
@@ -185,6 +202,20 @@ export default function ClientView({ tableId, socket }) {
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh', flexDirection: 'column', gap: '15px' }}>
         <Coffee size={48} className="status-pedido_pendiente" style={{ animation: 'pulse-glow 1.5s infinite' }} />
         <p style={{ color: 'var(--text-secondary)' }}>Cargando menú delicioso...</p>
+      </div>
+    );
+  }
+
+  if (tableUnavailable) {
+    return (
+      <div className="animate-fade-in" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+        <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', maxWidth: '420px' }}>
+          <Coffee size={48} style={{ color: 'var(--text-muted)', margin: '0 auto 16px auto' }} />
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>Esta mesa no está disponible</h2>
+          <p style={{ color: 'var(--text-secondary)' }}>
+            La mesa {tableId} no existe o fue dada de baja. Por favor consultá al personal de la cafetería o escaneá el QR de otra mesa.
+          </p>
+        </div>
       </div>
     );
   }

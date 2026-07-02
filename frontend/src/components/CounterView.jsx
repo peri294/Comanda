@@ -219,6 +219,18 @@ export default function CounterView({ socket, token, onLogout }) {
     if (editingOrderId === order.id) cancelEditingOrder();
   };
 
+  // --- Alta/baja de mesas (el backend asigna el número más chico sin usar,
+  // y solo permite quitar mesas libres) ---
+
+  const handleAddTable = () => {
+    socket.emit('add-table', {});
+  };
+
+  const handleRemoveTable = (tableId) => {
+    if (!window.confirm(`¿Dar de baja la Mesa ${tableId}? Su QR dejará de funcionar hasta que se vuelva a agregar.`)) return;
+    socket.emit('remove-table', { tableId });
+  };
+
   // Mesa y pedidos seleccionados, derivados en vivo (no una copia congelada al abrir el modal)
   const selectedTable = selectedTableId ? tables.find(t => t.id === selectedTableId) : null;
   const selectedTableOrders = selectedTableId
@@ -254,6 +266,14 @@ export default function CounterView({ socket, token, onLogout }) {
             <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Caja del Día</span>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>${dailySales}</div>
           </div>
+          <button
+            className="btn-secondary"
+            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            onClick={handleAddTable}
+            title="Agregar una mesa nueva (toma el número más chico disponible)"
+          >
+            <Plus size={16} /> Agregar Mesa
+          </button>
           <button
             className="btn-secondary"
             style={{ padding: '10px 16px', fontSize: '0.8rem' }}
@@ -308,7 +328,17 @@ export default function CounterView({ socket, token, onLogout }) {
 
                   <div className="table-card-footer">
                     {table.status === 'libre' ? (
-                      <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Mesa vacía</span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Mesa vacía</span>
+                        <button
+                          className="btn-secondary"
+                          style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'rgba(231, 111, 81, 0.3)' }}
+                          onClick={() => handleRemoveTable(table.id)}
+                          title={`Dar de baja la Mesa ${table.id}`}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
                     ) : (
                       <div style={{ display: 'flex', width: '100%', gap: '8px', flexDirection: 'column' }}>
                         

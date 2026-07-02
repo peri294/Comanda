@@ -81,6 +81,7 @@ const upsertAssistanceStmt = db.prepare(`
 `);
 
 const deleteAssistanceStmt = db.prepare('DELETE FROM assistance_requests WHERE table_id = ?');
+const deleteTableStmt = db.prepare('DELETE FROM tables WHERE id = ?');
 
 // --- CONVERSIÓN FILA <-> OBJETO ---
 
@@ -139,6 +140,10 @@ export const persistAssistance = (tableId, request) => {
 
 export const deleteAssistance = (tableId) => {
   deleteAssistanceStmt.run(tableId);
+};
+
+export const deleteTable = (tableId) => {
+  deleteTableStmt.run(tableId);
 };
 
 // Carga el estado persistido a memoria. Si la base está vacía (primer arranque),
