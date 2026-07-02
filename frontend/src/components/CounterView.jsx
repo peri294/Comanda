@@ -32,6 +32,9 @@ export default function CounterView({ socket, token, onLogout }) {
         if (data.tables) setTables(data.tables);
         if (data.orders) setActiveOrders(data.orders);
         if (data.assistanceRequests) setAssistanceRequests(data.assistanceRequests);
+        // La caja del día viene calculada por el server (pedidos cobrados hoy en la DB),
+        // así recargar la página no la resetea a $0.
+        if (data.dailySales !== undefined) setDailySales(data.dailySales);
       })
       .catch(err => console.error("Error fetching initial counter state:", err));
   }, [token]);
@@ -89,6 +92,12 @@ export default function CounterView({ socket, token, onLogout }) {
       setActiveOrders(updatedOrders);
     });
 
+    // El server recalcula la caja tras cada cobro y la manda a todos los mostradores
+    // conectados: única fuente de verdad, sin sumas locales que puedan divergir.
+    socket.on('daily-sales-updated', (total) => {
+      setDailySales(total);
+    });
+
     // Una mesa llamó al mozo
     socket.on('assistance-requested', ({ tableId, timestamp }) => {
       setAssistanceRequests(prev => {
@@ -111,6 +120,7 @@ export default function CounterView({ socket, token, onLogout }) {
       socket.off('order-received-counter');
       socket.off('bill-requested');
       socket.off('orders-updated');
+      socket.off('daily-sales-updated');
       socket.off('assistance-requested');
     };
   }, [socket]);
@@ -146,10 +156,10 @@ export default function CounterView({ socket, token, onLogout }) {
     }
   };
 
-  // Close table and process payment
-  const handleCloseTable = (tableId, total) => {
+  // Close table and process payment (la caja del día la actualiza el server
+  // vía daily-sales-updated, acá no se suma nada localmente)
+  const handleCloseTable = (tableId) => {
     socket.emit('close-table', { tableId });
-    setDailySales(prev => prev + total);
 
     // Clear details modal if open
     if (selectedTableId === tableId) {
@@ -354,7 +364,7 @@ export default function CounterView({ socket, token, onLogout }) {
                               fontSize: '0.85rem',
                               padding: '8px 12px'
                             }} 
-                            onClick={() => handleCloseTable(table.id, table.total)}
+                            onClick={() => handleCloseTable(table.id)}
                           >
                             {table.status === 'esperando_cuenta' ? (
                               <><DollarSign size={14} /> Cobrar Efectivo</>
@@ -577,7 +587,7 @@ export default function CounterView({ socket, token, onLogout }) {
                 <button 
                   className="btn-primary" 
                   style={{ flex: 1, background: 'linear-gradient(135deg, var(--success), #4a9e62)' }}
-                  onClick={() => handleCloseTable(selectedTable.id, selectedTable.total)}
+                  onClick={() => handleCloseTable(selectedTable.id)}
                 >
                   Confirmar Cobro y Cerrar Mesa
                 </button>

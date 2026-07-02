@@ -38,7 +38,8 @@ db.exec(`
     notes      TEXT NOT NULL DEFAULT '',
     status     TEXT NOT NULL,
     archived   INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    closed_at  TEXT
   );
 
   CREATE TABLE IF NOT EXISTS assistance_requests (
@@ -48,6 +49,14 @@ db.exec(`
     resolved_at INTEGER
   );
 `);
+
+// Migración para bases creadas antes de que existiera closed_at (CREATE TABLE IF NOT
+// EXISTS no agrega columnas a una tabla ya existente, y el sentido de la persistencia
+// es justamente que las bases viejas sigan funcionando tras actualizar el código).
+const orderColumns = db.prepare('PRAGMA table_info(orders)').all().map(col => col.name);
+if (!orderColumns.includes('closed_at')) {
+  db.exec('ALTER TABLE orders ADD COLUMN closed_at TEXT');
+}
 
 // --- PREPARED STATEMENTS ---
 
@@ -62,13 +71,14 @@ const upsertTableStmt = db.prepare(`
 `);
 
 const upsertOrderStmt = db.prepare(`
-  INSERT INTO orders (id, table_id, items, notes, status, archived, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO orders (id, table_id, items, notes, status, archived, created_at, closed_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     items = excluded.items,
     notes = excluded.notes,
     status = excluded.status,
-    archived = excluded.archived
+    archived = excluded.archived,
+    closed_at = excluded.closed_at
 `);
 
 const upsertAssistanceStmt = db.prepare(`
@@ -100,7 +110,8 @@ const rowToOrder = (row) => ({
   notes: row.notes,
   status: row.status,
   archived: Boolean(row.archived),
-  createdAt: row.created_at
+  createdAt: row.created_at,
+  closedAt: row.closed_at
 });
 
 // --- API DEL MÓDULO ---
@@ -130,7 +141,8 @@ export const persistOrder = (order) => {
     order.notes || '',
     order.status,
     order.archived ? 1 : 0,
-    order.createdAt
+    order.createdAt,
+    order.closedAt || null
   );
 };
 
@@ -167,6 +179,25 @@ export const loadState = (initialTables) => {
       ])
     )
   };
+};
+
+// "Caja del Día": suma de los pedidos efectivamente cobrados hoy. Se filtra por
+// closed_at (momento del cobro, no de la creación del pedido: una mesa que pidió a las
+// 23:50 y pagó a las 00:10 cuenta para el día en que entró la plata) desde la
+// medianoche LOCAL del server (comparar ISO strings funciona porque ordenan
+// lexicográficamente). Los cancelados nunca tienen closed_at, así que quedan afuera.
+// El total se suma en JS desde el JSON de items — son un puñado de filas por día y
+// evita denormalizar un total que pueda divergir de los items.
+export const getDailySalesTotal = () => {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const rows = db
+    .prepare("SELECT items FROM orders WHERE archived = 1 AND status = 'entregado' AND closed_at >= ?")
+    .all(midnight.toISOString());
+  return rows.reduce(
+    (acc, row) => acc + JSON.parse(row.items).reduce((sum, item) => sum + item.price * item.quantity, 0),
+    0
+  );
 };
 
 // Solo para /api/test/reset: vuelve la base al estado de primer arranque.

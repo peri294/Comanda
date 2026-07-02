@@ -39,12 +39,21 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   await counterPage.getByRole('button', { name: /confirmar cobro y cerrar mesa/i }).click();
   await expect(mesa13.getByText('Mesa vacía')).toBeVisible({ timeout: 10000 });
 
-  // 5. DAR DE BAJA LA MESA
+  // 5. LA CAJA DEL DÍA REFLEJA EL COBRO Y SOBREVIVE A UNA RECARGA
+  // (este es el único test de la suite que cierra mesas, así que el valor es exacto)
+  const cajaPanel = counterPage.locator('.glass-panel', { hasText: 'Caja del Día' });
+  await expect(cajaPanel.getByText('$1800')).toBeVisible({ timeout: 10000 });
+  // Antes la caja era un contador local del navegador: recargar la volvía a $0.
+  // Ahora la calcula el server desde la DB (pedidos cobrados hoy).
+  await counterPage.reload();
+  await expect(cajaPanel.getByText('$1800')).toBeVisible({ timeout: 15000 });
+
+  // 6. DAR DE BAJA LA MESA
   counterPage.once('dialog', dialog => dialog.accept());
   await mesa13.getByTitle('Dar de baja la Mesa 13').click();
   await expect(mesa13).toHaveCount(0, { timeout: 10000 });
 
-  // 6. EL QR VIEJO QUEDA BLOQUEADO PARA EL CLIENTE
+  // 7. EL QR VIEJO QUEDA BLOQUEADO PARA EL CLIENTE
   // El cliente que estaba mirando la mesa recibe el aviso en vivo (table-removed)...
   await expect(clientPage.getByText('Esta mesa no está disponible')).toBeVisible({ timeout: 10000 });
   // ...y quien entra de cero con ese QR también la ve como no disponible (join responde null)

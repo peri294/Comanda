@@ -11,7 +11,8 @@ import {
   deleteAssistance,
   deleteTable,
   resetState,
-  runInTransaction
+  runInTransaction,
+  getDailySalesTotal
 } from './db.js';
 
 const app = express();
@@ -270,7 +271,10 @@ app.get('/api/initial-state', requireStaffAuth, (req, res) => {
     // que quedaron sin atender mientras no estaba conectado, no solo los que lleguen a partir de ahora.
     assistanceRequests: Array.from(activeAssistanceRequests.entries())
       .filter(([, req]) => !req.resolved)
-      .map(([tableId, req]) => ({ tableId, timestamp: req.timestamp }))
+      .map(([tableId, req]) => ({ tableId, timestamp: req.timestamp })),
+    // "Caja del Día" calculada desde la base (pedidos cobrados hoy), no acumulada en el
+    // navegador: así una recarga de la página del mostrador no la resetea a $0.
+    dailySales: getDailySalesTotal()
   });
 });
 
@@ -597,12 +601,17 @@ io.on('connection', (socket) => {
     const tableId = String(rawTableId);
     const tableIndex = tables.findIndex(t => t.id === tableId);
     if (tableIndex !== -1) {
-      // Marcar todos los pedidos de esa mesa como entregados y archivados (mesa cobrada)
+      // Marcar los pedidos de esa mesa como entregados y archivados (mesa cobrada),
+      // sellando el momento del cobro (closedAt) para la "Caja del Día". Los pedidos
+      // cancelados no se tocan: nunca se cobraron, no pueden "resucitar" a entregado
+      // ni contar como venta (antes este forEach los pisaba, inflando la caja).
+      const closedAt = new Date().toISOString();
       const closedOrders = [];
       orders.forEach(o => {
-        if (o.tableId === tableId) {
+        if (o.tableId === tableId && o.status !== 'cancelado') {
           o.status = 'entregado';
           o.archived = true;
+          o.closedAt = closedAt;
           closedOrders.push(o);
         }
       });
@@ -626,6 +635,9 @@ io.on('connection', (socket) => {
       // Notificar a mostrador, cocina y a la mesa correspondiente
       broadcastTables();
       broadcastOrders();
+      // El server es la única fuente de la caja: todos los mostradores conectados
+      // reciben el total real (dos pestañas abiertas no divergen por sumas locales).
+      io.to('counter').emit('daily-sales-updated', getDailySalesTotal());
       io.to(`table-${tableId}`).emit('table-closed');
       io.to(`table-${tableId}`).emit('table-state', tables[tableIndex]);
     }
