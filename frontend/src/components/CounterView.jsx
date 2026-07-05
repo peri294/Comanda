@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { createAudioContext, playTone } from '../utils/sound';
+import { BACKEND_URL } from '../config';
 
 export default function CounterView({ socket, token, onLogout }) {
   const [tables, setTables] = useState([]);
@@ -24,7 +25,7 @@ export default function CounterView({ socket, token, onLogout }) {
 
   // Load initial state
   useEffect(() => {
-    fetch('http://localhost:3001/api/initial-state', {
+    fetch(`${BACKEND_URL}/api/initial-state`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => res.json())
@@ -41,7 +42,7 @@ export default function CounterView({ socket, token, onLogout }) {
 
   // Menú, para poder agregar productos a un pedido al editarlo
   useEffect(() => {
-    fetch('http://localhost:3001/api/menu')
+    fetch(`${BACKEND_URL}/api/menu`)
       .then(res => res.json())
       .then(setMenu)
       .catch(err => console.error("Error fetching menu:", err));

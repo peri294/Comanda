@@ -7,6 +7,7 @@ import CounterView from './components/CounterView';
 import StaffLogin from './components/StaffLogin';
 import { createAudioContext, playTone } from './utils/sound';
 import { useStaffAuth } from './hooks/useStaffAuth';
+import { BACKEND_URL } from './config';
 
 export default function App() {
   const [view, setView] = useState('portal'); // 'portal', 'client', 'kitchen', 'counter'
@@ -42,7 +43,7 @@ export default function App() {
 
   // Initialize Socket.io Connection
   useEffect(() => {
-    const newSocket = io('http://localhost:3001', {
+    const newSocket = io(BACKEND_URL, {
       transports: ['websocket', 'polling']
     });
 

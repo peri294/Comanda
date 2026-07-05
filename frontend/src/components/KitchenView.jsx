@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ChefHat, Check, Coffee, Play, LogOut } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { createAudioContext, playTone } from '../utils/sound';
+import { BACKEND_URL } from '../config';
 
 export default function KitchenView({ socket, token, onLogout }) {
   const [orders, setOrders] = useState([]);
@@ -10,7 +11,7 @@ export default function KitchenView({ socket, token, onLogout }) {
 
   // Fetch initial active orders
   useEffect(() => {
-    fetch('http://localhost:3001/api/initial-state', {
+    fetch(`${BACKEND_URL}/api/initial-state`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => res.json())

@@ -5,6 +5,7 @@ import {
   DollarSign, CheckCircle, Clock, ChefHat, Bell, Hand, Receipt, ChevronUp, ChevronDown
 } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
+import { BACKEND_URL } from '../config';
 
 export default function ClientView({ tableId, socket }) {
   const [menu, setMenu] = useState([]);
@@ -36,7 +37,7 @@ export default function ClientView({ tableId, socket }) {
 
   // Fetch Menu
   useEffect(() => {
-    fetch('http://localhost:3001/api/menu')
+    fetch(`${BACKEND_URL}/api/menu`)
       .then(res => res.json())
       .then(data => {
         setMenu(data);
