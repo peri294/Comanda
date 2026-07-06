@@ -11,6 +11,7 @@ QR Coffee Shop es un sistema integral que digitaliza el proceso de toma de pedid
 
 ## 🚀 Características Principales
 * **Comunicación en Tiempo Real:** Actualizaciones inmediatas entre vistas mediante WebSockets (`Socket.io`).
+* **Menú Administrable:** El mostrador gestiona productos, precios y stock ("Agotado") desde su panel; los clientes ven los cambios al instante, sin recargar.
 * **Arquitectura Unificada:** Un único build de frontend que sirve para tres roles (Cliente, Cocina, Mostrador) mediante parámetros de consulta.
 * **UI/UX Moderna:** Diseño inspirado en *Glassmorphism* con modo oscuro nativo.
 * **Sistema de Notificaciones:** Sistema de audio sintético para alertas instantáneas en cocina y mostrador.

@@ -10,6 +10,8 @@ import {
   persistAssistance,
   deleteAssistance,
   deleteTable,
+  persistMenuItem,
+  deleteMenuItem,
   resetState,
   runInTransaction,
   getDailySalesTotal,
@@ -65,22 +67,14 @@ const INITIAL_TABLES = Array.from({ length: 12 }, (_, i) => ({
   total: 0
 }));
 
-// Las lecturas y la lógica de negocio operan sobre estas estructuras en memoria;
-// cada mutación se refleja en SQLite (write-through, ver db.js), así un restart
-// del server ya no borra las mesas y pedidos en curso.
-const persistedState = loadState(INITIAL_TABLES);
-let tables = persistedState.tables;
-let orders = persistedState.orders;
+// Categorías válidas en v1: los filtros del cliente están atados a estas cuatro,
+// un producto con una categoría inventada no tendría pestaña donde aparecer.
+const MENU_CATEGORIES = ['bebidas_calientes', 'bebidas_frias', 'pasteleria', 'salado'];
 
-// Solicitudes de "Llamar al Mozo" activas, indexadas por mesa: { timestamp, resolved, resolvedAt }.
-// Mientras sigue sin atender, se bloquea cualquier duplicado sin importar el tiempo transcurrido.
-// Una vez atendida, solo se aplica un cooldown corto (medido desde que se resolvió, no desde el
-// pedido original) para evitar un doble-click accidental, sin bloquear un pedido de ayuda legítimo.
-const activeAssistanceRequests = persistedState.assistanceRequests;
-const ASSISTANCE_REOPEN_COOLDOWN_MS = 10_000;
-
-// Menú de la cafetería
-const MENU = [
+// Semilla del menú para el primer arranque (y para /api/test/reset). Después de
+// sembrarse, la copia de trabajo es menuCache y la fuente durable es la tabla
+// `menu` en SQLite: este array ya no se consulta en los flujos normales.
+const DEFAULT_MENU = [
   {
     id: 'm1',
     name: 'Espresso Italiano',
@@ -185,26 +179,87 @@ const MENU = [
     category: 'salado',
     image: 'chipas'
   }
-];
+].map(item => ({ ...item, available: true }));
+
+// Las lecturas y la lógica de negocio operan sobre estas estructuras en memoria;
+// cada mutación se refleja en SQLite (write-through, ver db.js), así un restart
+// del server ya no borra las mesas, pedidos ni cambios del menú.
+const persistedState = loadState(INITIAL_TABLES, DEFAULT_MENU);
+let tables = persistedState.tables;
+let orders = persistedState.orders;
+let menuCache = persistedState.menu;
+
+// Solicitudes de "Llamar al Mozo" activas, indexadas por mesa: { timestamp, resolved, resolvedAt }.
+// Mientras sigue sin atender, se bloquea cualquier duplicado sin importar el tiempo transcurrido.
+// Una vez atendida, solo se aplica un cooldown corto (medido desde que se resolvió, no desde el
+// pedido original) para evitar un doble-click accidental, sin bloquear un pedido de ayuda legítimo.
+const activeAssistanceRequests = persistedState.assistanceRequests;
+const ASSISTANCE_REOPEN_COOLDOWN_MS = 10_000;
 
 // --- HELPERS ---
 
 const findTable = (tableId) => tables.find(t => t.id === tableId);
-const getMenuItem = (productId) => MENU.find(m => m.id === productId);
+const getMenuItem = (productId) => menuCache.find(m => m.id === productId);
 
 // Nunca confiar en precio/nombre que manda el cliente: siempre se recalculan contra
-// el MENU del servidor, así nadie puede pedir gratis (o más caro) manipulando el payload.
-// También descarta productos inexistentes y cantidades inválidas.
+// el menú del servidor, así nadie puede pedir gratis (o más caro) manipulando el payload.
+// También descarta productos inexistentes, agotados (available = false: la UI ya no
+// deja pedirlos, pero un payload manual podría intentarlo igual) y cantidades inválidas.
 const sanitizeItems = (items) => {
   if (!Array.isArray(items)) return [];
   return items.reduce((acc, item) => {
     const menuItem = getMenuItem(item?.productId);
     const quantity = Math.floor(Number(item?.quantity));
-    if (menuItem && Number.isFinite(quantity) && quantity > 0) {
+    if (menuItem && menuItem.available && Number.isFinite(quantity) && quantity > 0) {
       acc.push({ productId: menuItem.id, name: menuItem.name, price: menuItem.price, quantity });
     }
     return acc;
   }, []);
+};
+
+// Variante para edit-order: "agotado" significa *no pedir más*, no *borrar lo ya pedido*.
+// Los items que ya estaban en el pedido se conservan con su snapshot (nombre/precio al
+// momento de pedirlos), aunque el producto se haya agotado o borrado del menú después
+// — si no, editar un pedido con un producto discontinuado lo haría desaparecer en
+// silencio (y con un solo item, cancelaría el pedido entero). Solo los items nuevos
+// se validan estrictamente contra el menú vigente y su disponibilidad.
+const sanitizeEditItems = (order, rawItems) => {
+  if (!Array.isArray(rawItems)) return [];
+  return rawItems.reduce((acc, item) => {
+    const quantity = Math.floor(Number(item?.quantity));
+    if (!Number.isFinite(quantity) || quantity <= 0) return acc;
+
+    const existing = order.items.find(i => i.productId === item?.productId);
+    if (existing) {
+      acc.push({ productId: existing.productId, name: existing.name, price: existing.price, quantity });
+    } else {
+      const menuItem = getMenuItem(item?.productId);
+      if (menuItem && menuItem.available) {
+        acc.push({ productId: menuItem.id, name: menuItem.name, price: menuItem.price, quantity });
+      }
+    }
+    return acc;
+  }, []);
+};
+
+// Valida y normaliza los campos de un producto del menú que manda el mostrador.
+// Devuelve null si algo es inválido (nombre vacío, precio no positivo, categoría
+// desconocida): la validación visual del formulario no exime a la del server.
+const sanitizeMenuFields = ({ name, description, price, category, image } = {}) => {
+  const cleanName = typeof name === 'string' ? name.trim() : '';
+  const numPrice = Number(price);
+  if (!cleanName || !Number.isFinite(numPrice) || numPrice <= 0 || !MENU_CATEGORIES.includes(category)) {
+    return null;
+  }
+  return {
+    name: cleanName,
+    description: typeof description === 'string' ? description.trim() : '',
+    price: numPrice,
+    category,
+    // El icono se elige por nombre; para productos nuevos sin icono propio se usa
+    // uno genérico (el cliente igual renderiza por categoría, ver ClientView).
+    image: (typeof image === 'string' && image.trim()) || 'coffee'
+  };
 };
 
 // Recalcula el total de una mesa a partir de sus pedidos activos (no archivados).
@@ -240,9 +295,9 @@ const broadcastTables = () => io.to('counter').emit('tables-updated', tables);
 
 // --- ENDPOINTS HTTP ---
 
-// Obtener menú
+// Obtener menú (incluye los agotados: el cliente los muestra como "Agotado")
 app.get('/api/menu', (req, res) => {
-  res.json(MENU);
+  res.json(menuCache);
 });
 
 // Login de personal (cocina/mostrador). Devuelve un token de sesión de larga duración
@@ -287,8 +342,11 @@ if (process.env.NODE_ENV !== 'production') {
   app.post('/api/test/reset', (req, res) => {
     tables = JSON.parse(JSON.stringify(INITIAL_TABLES));
     orders = [];
+    // El menú también vuelve a la semilla: los specs de menú crean/borran productos
+    // y los demás specs piden los productos por nombre esperando sus precios de fábrica.
+    menuCache = JSON.parse(JSON.stringify(DEFAULT_MENU));
     activeAssistanceRequests.clear();
-    resetState(INITIAL_TABLES);
+    resetState(INITIAL_TABLES, DEFAULT_MENU);
     res.json({ ok: true });
   });
 }
@@ -443,7 +501,9 @@ io.on('connection', (socket) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || order.archived || order.status !== 'pendiente') return;
 
-    const items = sanitizeItems(rawItems);
+    // Variante especial de sanitización: conserva los items ya pedidos aunque el
+    // producto se haya agotado/borrado del menú después (ver sanitizeEditItems).
+    const items = sanitizeEditItems(order, rawItems);
     // Si el mostrador saca todos los items (o no quedó ninguno válido), es lo mismo
     // que cancelar el pedido entero.
     if (items.length === 0) {
@@ -642,6 +702,58 @@ io.on('connection', (socket) => {
       io.to(`table-${tableId}`).emit('table-closed');
       io.to(`table-${tableId}`).emit('table-state', tables[tableIndex]);
     }
+  });
+
+  // --- CRUD DEL MENÚ (desde Mostrador) ---
+  // Por sockets y no por HTTP a propósito: la guarda roles.has('counter') es la misma
+  // que protege close-table/add-table (requireStaffAuth no alcanza: aceptaría también
+  // el token de cocina, que no tiene por qué poder tocar precios). Tras cada mutación
+  // se persiste en SQLite y se emite menu-updated a TODOS los conectados (los clientes
+  // en las mesas actualizan catálogo y carrito en vivo, sin recargar).
+
+  // Evento: Agregar un producto al menú
+  socket.on('menu-add', (data = {}) => {
+    if (!socket.data.roles?.has('counter')) return;
+    const fields = sanitizeMenuFields(data);
+    if (!fields) return;
+
+    const newItem = {
+      id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      ...fields,
+      available: true
+    };
+    menuCache.push(newItem);
+    persistMenuItem(newItem);
+    io.emit('menu-updated', menuCache);
+  });
+
+  // Evento: Editar un producto (datos y/o disponibilidad). El switch rápido de
+  // "agotado" del mostrador usa este mismo evento con available invertido.
+  socket.on('menu-update', (data = {}) => {
+    if (!socket.data.roles?.has('counter')) return;
+    const item = menuCache.find(m => m.id === data.id);
+    if (!item) return;
+    const fields = sanitizeMenuFields(data);
+    if (!fields) return;
+
+    // Si el payload no trae available (edición de datos solamente), se conserva el
+    // actual: que un formulario incompleto no "agote" un producto por accidente.
+    const available = data.available === undefined ? item.available : Boolean(data.available);
+    Object.assign(item, fields, { available });
+    persistMenuItem(item);
+    io.emit('menu-updated', menuCache);
+  });
+
+  // Evento: Eliminar un producto del menú. No rompe nada retroactivamente: los
+  // pedidos (activos y archivados) guardan snapshot de nombre/precio, y edit-order
+  // conserva los items ya pedidos aunque el producto ya no exista (sanitizeEditItems).
+  socket.on('menu-delete', ({ id } = {}) => {
+    if (!socket.data.roles?.has('counter')) return;
+    if (!menuCache.some(m => m.id === id)) return;
+
+    menuCache = menuCache.filter(m => m.id !== id);
+    deleteMenuItem(id);
+    io.emit('menu-updated', menuCache);
   });
 
   // Evento: Cerrar la caja (desde Mostrador). Registra un cierre en el histórico con

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { createAudioContext, playTone } from '../utils/sound';
 import { BACKEND_URL } from '../config';
@@ -22,6 +22,11 @@ export default function CounterView({ socket, token, onLogout }) {
 
   // Mesas que llamaron al mozo y todavía no fueron atendidas
   const [assistanceRequests, setAssistanceRequests] = useState([]);
+
+  // Administración del menú (alta/edición/baja/stock de productos)
+  const [isMenuAdminOpen, setIsMenuAdminOpen] = useState(false);
+  const emptyMenuForm = { id: null, name: '', description: '', price: '', category: 'bebidas_calientes' };
+  const [menuForm, setMenuForm] = useState(emptyMenuForm);
 
   // Load initial state
   useEffect(() => {
@@ -128,6 +133,12 @@ export default function CounterView({ socket, token, onLogout }) {
       playNotificationSound('assistance');
     });
 
+    // El menú cambió (posiblemente desde otra pestaña/tablet de mostrador):
+    // se refresca la copia local usada por el panel de menú y la edición de pedidos.
+    socket.on('menu-updated', (newMenu) => {
+      setMenu(newMenu);
+    });
+
     return () => {
       socket.off('tables-updated');
       socket.off('order-received-counter');
@@ -136,6 +147,7 @@ export default function CounterView({ socket, token, onLogout }) {
       socket.off('daily-sales-updated');
       socket.off('register-closed');
       socket.off('assistance-requested');
+      socket.off('menu-updated');
     };
   }, [socket]);
 
@@ -255,6 +267,61 @@ export default function CounterView({ socket, token, onLogout }) {
     socket.emit('remove-table', { tableId });
   };
 
+  // --- Administración del menú ---
+  // Todas las mutaciones van por sockets protegidos con rol counter; el estado local
+  // no se toca acá: la única fuente es el broadcast menu-updated que responde el server.
+
+  const closeMenuAdmin = () => {
+    setIsMenuAdminOpen(false);
+    setMenuForm(emptyMenuForm);
+  };
+
+  const startEditingMenuItem = (item) => {
+    setMenuForm({
+      id: item.id,
+      name: item.name,
+      description: item.description || '',
+      price: String(item.price),
+      category: item.category
+    });
+  };
+
+  const submitMenuForm = (e) => {
+    e.preventDefault();
+    const name = menuForm.name.trim();
+    const price = Number(menuForm.price);
+    if (!name || !Number.isFinite(price) || price <= 0) return;
+
+    const payload = { name, description: menuForm.description.trim(), price, category: menuForm.category };
+    if (menuForm.id) {
+      // Edición: disponibilidad e icono actuales se conservan (el switch de stock es aparte)
+      const current = menu.find(m => m.id === menuForm.id);
+      socket.emit('menu-update', { id: menuForm.id, ...payload, image: current?.image, available: current?.available });
+    } else {
+      socket.emit('menu-add', payload);
+    }
+    setMenuForm(emptyMenuForm);
+  };
+
+  // Switch rápido de stock: apagar un producto que se agotó en el salón sin borrarlo
+  const toggleMenuAvailability = (item) => {
+    socket.emit('menu-update', {
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      price: item.price,
+      category: item.category,
+      image: item.image,
+      available: !item.available
+    });
+  };
+
+  const handleDeleteMenuItem = (item) => {
+    if (!window.confirm(`¿Eliminar "${item.name}" del menú? Los pedidos ya realizados no se modifican.`)) return;
+    socket.emit('menu-delete', { id: item.id });
+    if (menuForm.id === item.id) setMenuForm(emptyMenuForm);
+  };
+
   // Cierre de caja: el server sella el total real desde el cierre anterior; el monto
   // del confirm es informativo (lo que muestra la pantalla en este momento).
   const handleCloseRegister = () => {
@@ -312,6 +379,14 @@ export default function CounterView({ socket, token, onLogout }) {
             title="Agregar una mesa nueva (toma el número más chico disponible)"
           >
             <Plus size={16} /> Agregar Mesa
+          </button>
+          <button
+            className="btn-secondary"
+            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            onClick={() => setIsMenuAdminOpen(true)}
+            title="Administrar los productos del menú (precios, stock, altas y bajas)"
+          >
+            <BookOpen size={16} /> Administrar Menú
           </button>
           <button
             className="btn-secondary"
@@ -480,6 +555,145 @@ export default function CounterView({ socket, token, onLogout }) {
 
       </div>
 
+      {/* Menu Admin Modal */}
+      {isMenuAdminOpen && (
+        <div className="modal-overlay" onClick={closeMenuAdmin}>
+          <div className="glass-panel modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
+            <div className="modal-header">
+              <h3 style={{ fontSize: '1.4rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <BookOpen size={22} style={{ color: 'var(--accent-gold)' }} /> Administrar Menú
+              </h3>
+              <button className="modal-close" onClick={closeMenuAdmin}>
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Formulario de alta / edición */}
+            <form
+              onSubmit={submitMenuForm}
+              style={{
+                display: 'flex', flexDirection: 'column', gap: '10px', margin: '15px 0',
+                padding: '14px', border: '1px solid var(--border-color)', borderRadius: '12px',
+                background: 'rgba(255, 255, 255, 0.02)'
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--accent-gold)' }}>
+                {menuForm.id ? `Editando: ${menu.find(m => m.id === menuForm.id)?.name || ''}` : 'Agregar Producto Nuevo'}
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <input
+                  placeholder="Nombre del producto"
+                  value={menuForm.name}
+                  onChange={(e) => setMenuForm(f => ({ ...f, name: e.target.value }))}
+                  style={{
+                    flex: 2, padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
+                    border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
+                  }}
+                />
+                <input
+                  placeholder="Precio"
+                  type="number"
+                  min="1"
+                  value={menuForm.price}
+                  onChange={(e) => setMenuForm(f => ({ ...f, price: e.target.value }))}
+                  style={{
+                    flex: 1, padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
+                    border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <input
+                  placeholder="Descripción (opcional)"
+                  value={menuForm.description}
+                  onChange={(e) => setMenuForm(f => ({ ...f, description: e.target.value }))}
+                  style={{
+                    flex: 2, padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
+                    border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
+                  }}
+                />
+                <select
+                  value={menuForm.category}
+                  onChange={(e) => setMenuForm(f => ({ ...f, category: e.target.value }))}
+                  style={{
+                    flex: 1, padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
+                    border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
+                  }}
+                >
+                  <option value="bebidas_calientes">Café Caliente</option>
+                  <option value="bebidas_frias">Fríos y Licuados</option>
+                  <option value="pasteleria">Pastelería</option>
+                  <option value="salado">Salado</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button type="submit" className="btn-primary" style={{ flex: 1, padding: '10px', fontSize: '0.9rem' }}>
+                  {menuForm.id ? 'Guardar Cambios' : 'Agregar Producto'}
+                </button>
+                {menuForm.id && (
+                  <button type="button" className="btn-secondary" style={{ flex: 1, padding: '10px', fontSize: '0.9rem' }} onClick={() => setMenuForm(emptyMenuForm)}>
+                    Cancelar Edición
+                  </button>
+                )}
+              </div>
+            </form>
+
+            {/* Lista de productos */}
+            <div style={{ maxHeight: '45vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {menu.map(item => (
+                <div
+                  key={item.id}
+                  className="menu-admin-row"
+                  style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px',
+                    padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: '10px',
+                    opacity: item.available === false ? 0.55 : 1
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                      {item.available === false && (
+                        <span style={{ color: 'var(--danger)', fontSize: '0.7rem', fontWeight: 800, flexShrink: 0 }}>AGOTADO</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      ${item.price} · {item.category.replace('_', ' ')}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 10px', fontSize: '0.75rem' }}
+                      title={item.available === false ? 'Marcar como disponible' : 'Marcar como agotado'}
+                      onClick={() => toggleMenuAvailability(item)}
+                    >
+                      {item.available === false ? 'Reponer' : 'Agotar'}
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 10px' }}
+                      title={`Editar ${item.name}`}
+                      onClick={() => startEditingMenuItem(item)}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 10px', color: 'var(--danger)', borderColor: 'rgba(231, 111, 81, 0.3)' }}
+                      title={`Eliminar ${item.name}`}
+                      onClick={() => handleDeleteMenuItem(item)}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Table Detail Modal */}
       {isModalOpen && selectedTable && (
         <div className="modal-overlay" onClick={closeModal}>
@@ -560,7 +774,8 @@ export default function CounterView({ socket, token, onLogout }) {
                               }}
                             >
                               <option value="">Agregar producto...</option>
-                              {menu.map(m => (
+                              {/* Sin agotados: el server rechazaría agregarlos, la UI no los ofrece */}
+                              {menu.filter(m => m.available !== false).map(m => (
                                 <option key={m.id} value={m.id}>{m.name} — ${m.price}</option>
                               ))}
                             </select>

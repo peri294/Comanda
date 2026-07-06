@@ -42,6 +42,20 @@ db.exec(`
     closed_at  TEXT
   );
 
+  -- Menú administrable desde el Mostrador. 'available' permite apagar un producto
+  -- agotado sin borrarlo (el cliente lo ve como "Agotado" y el server rechaza pedirlo).
+  -- Borrar un producto no rompe el historial: orders.items guarda un snapshot JSON
+  -- con nombre y precio al momento de la compra.
+  CREATE TABLE IF NOT EXISTS menu (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    price       REAL NOT NULL,
+    category    TEXT NOT NULL,
+    image       TEXT NOT NULL,
+    available   INTEGER NOT NULL DEFAULT 1
+  );
+
   CREATE TABLE IF NOT EXISTS assistance_requests (
     table_id    TEXT PRIMARY KEY,
     timestamp   INTEGER NOT NULL,
@@ -99,8 +113,21 @@ const upsertAssistanceStmt = db.prepare(`
     resolved_at = excluded.resolved_at
 `);
 
+const upsertMenuStmt = db.prepare(`
+  INSERT INTO menu (id, name, description, price, category, image, available)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    description = excluded.description,
+    price = excluded.price,
+    category = excluded.category,
+    image = excluded.image,
+    available = excluded.available
+`);
+
 const deleteAssistanceStmt = db.prepare('DELETE FROM assistance_requests WHERE table_id = ?');
 const deleteTableStmt = db.prepare('DELETE FROM tables WHERE id = ?');
+const deleteMenuStmt = db.prepare('DELETE FROM menu WHERE id = ?');
 const insertClosureStmt = db.prepare('INSERT INTO register_closures (closed_at, total, orders_count) VALUES (?, ?, ?)');
 
 // --- CONVERSIÓN FILA <-> OBJETO ---
@@ -111,6 +138,16 @@ const rowToTable = (row) => ({
   currentOrderId: row.current_order_id,
   paymentMethod: row.payment_method,
   total: row.total
+});
+
+const rowToMenuItem = (row) => ({
+  id: row.id,
+  name: row.name,
+  description: row.description,
+  price: row.price,
+  category: row.category,
+  image: row.image,
+  available: Boolean(row.available)
 });
 
 const rowToOrder = (row) => ({
@@ -168,20 +205,44 @@ export const deleteTable = (tableId) => {
   deleteTableStmt.run(tableId);
 };
 
+export const persistMenuItem = (item) => {
+  upsertMenuStmt.run(
+    item.id,
+    item.name,
+    item.description || '',
+    item.price,
+    item.category,
+    item.image,
+    item.available ? 1 : 0
+  );
+};
+
+export const deleteMenuItem = (id) => {
+  deleteMenuStmt.run(id);
+};
+
 // Carga el estado persistido a memoria. Si la base está vacía (primer arranque),
 // la siembra con las mesas iniciales. Los pedidos ya archivados (mesa cobrada o
 // pedido cancelado) quedan en la base como historial pero no se cargan: ningún
 // flujo los lee después de archivar, y así la memoria no crece sin límite.
-export const loadState = (initialTables) => {
+export const loadState = (initialTables, defaultMenu) => {
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM tables').get();
   if (n === 0) {
     runInTransaction(() => initialTables.forEach(persistTable));
+  }
+
+  // El menú se siembra aparte de las mesas: una base creada antes de que existiera
+  // la tabla menu ya tiene mesas, pero el menú igual necesita su semilla inicial.
+  const { m } = db.prepare('SELECT COUNT(*) AS m FROM menu').get();
+  if (m === 0) {
+    runInTransaction(() => defaultMenu.forEach(persistMenuItem));
   }
 
   return {
     tables: db.prepare('SELECT * FROM tables ORDER BY CAST(id AS INTEGER)').all().map(rowToTable),
     // rowid preserva el orden de inserción, igual que el array en memoria.
     orders: db.prepare('SELECT * FROM orders WHERE archived = 0 ORDER BY rowid').all().map(rowToOrder),
+    menu: db.prepare('SELECT * FROM menu ORDER BY rowid').all().map(rowToMenuItem),
     assistanceRequests: new Map(
       db.prepare('SELECT * FROM assistance_requests').all().map(row => [
         row.table_id,
@@ -237,9 +298,10 @@ export const closeRegister = () => {
 // Solo para /api/test/reset: vuelve la base al estado de primer arranque.
 // Borra también el historial de pedidos archivados — aceptable porque el endpoint
 // no existe en producción y los tests necesitan un estado 100% limpio.
-export const resetState = (initialTables) => {
+export const resetState = (initialTables, defaultMenu) => {
   runInTransaction(() => {
-    db.exec('DELETE FROM orders; DELETE FROM assistance_requests; DELETE FROM register_closures; DELETE FROM tables;');
+    db.exec('DELETE FROM orders; DELETE FROM assistance_requests; DELETE FROM register_closures; DELETE FROM tables; DELETE FROM menu;');
     initialTables.forEach(persistTable);
+    defaultMenu.forEach(persistMenuItem);
   });
 };

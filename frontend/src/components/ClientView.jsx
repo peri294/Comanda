@@ -107,12 +107,29 @@ export default function ClientView({ tableId, socket }) {
       setAssistanceRequested(false);
     });
 
+    // El mostrador cambió el menú (alta/edición/baja/stock): se actualiza el catálogo
+    // en vivo y se sincroniza el carrito local para no dejar que el cliente intente
+    // enviar items que el backend va a rechazar en silencio (borrados o agotados se
+    // sacan del carrito; los precios editados se actualizan antes de confirmar).
+    socket.on('menu-updated', (newMenu) => {
+      setMenu(newMenu);
+      setCart(prevCart => prevCart
+        .map(cartItem => {
+          const current = newMenu.find(m => m.id === cartItem.id);
+          if (!current || !current.available) return null;
+          return { ...cartItem, name: current.name, price: current.price };
+        })
+        .filter(Boolean)
+      );
+    });
+
     return () => {
       socket.off('table-state');
       socket.off('table-removed');
       socket.off('order-status-changed');
       socket.off('table-closed');
       socket.off('assistance-resolved');
+      socket.off('menu-updated');
     };
   }, [socket, tableId]);
 
@@ -417,7 +434,7 @@ export default function ClientView({ tableId, socket }) {
           {/* Menu Grid */}
           <div className="menu-grid">
             {filteredMenu.map(item => (
-              <div key={item.id} className="glass-panel menu-card">
+              <div key={item.id} className="glass-panel menu-card" style={item.available === false ? { opacity: 0.55 } : undefined}>
                 <div className="menu-card-img-container">
                   <div className="menu-card-img-placeholder">
                     {categoryEmojis[item.category] || '☕'}
@@ -432,13 +449,23 @@ export default function ClientView({ tableId, socket }) {
 
                   <div className="menu-card-footer">
                     <span className="menu-card-price">${item.price}</span>
-                    <button
-                      className="btn-primary"
-                      style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem' }}
-                      onClick={() => addToCart(item)}
-                    >
-                      <Plus size={14} /> Agregar
-                    </button>
+                    {item.available === false ? (
+                      <button
+                        className="btn-secondary"
+                        style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem', cursor: 'not-allowed' }}
+                        disabled
+                      >
+                        Agotado
+                      </button>
+                    ) : (
+                      <button
+                        className="btn-primary"
+                        style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem' }}
+                        onClick={() => addToCart(item)}
+                      >
+                        <Plus size={14} /> Agregar
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
