@@ -9,20 +9,29 @@ export default function KitchenView({ socket, token, onLogout }) {
   // Pedidos que el mostrador acaba de corregir, para resaltarlos un rato en la tarjeta
   const [flashIds, setFlashIds] = useState(new Set());
 
-  // Fetch initial active orders
+  // Pedidos activos iniciales, re-pedidos también tras cada reconexión del socket:
+  // los pedidos que entraron mientras la pantalla estuvo sin conexión no llegan solos
+  // (el re-join a la sala no re-emite el estado), así que se rehidrata desde el server.
   useEffect(() => {
-    fetch(`${BACKEND_URL}/api/initial-state`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.orders) {
-          // Filter out delivered/cancelled orders
-          setOrders(data.orders.filter(o => o.status !== 'entregado' && o.status !== 'cancelado'));
-        }
+    const fetchOrders = () => {
+      fetch(`${BACKEND_URL}/api/initial-state`, {
+        headers: { Authorization: `Bearer ${token}` }
       })
-      .catch(err => console.error("Error loading initial kitchen orders:", err));
-  }, [token]);
+        .then(res => res.json())
+        .then(data => {
+          if (data.orders) {
+            // Filter out delivered/cancelled orders
+            setOrders(data.orders.filter(o => o.status !== 'entregado' && o.status !== 'cancelado'));
+          }
+        })
+        .catch(err => console.error("Error loading initial kitchen orders:", err));
+    };
+
+    fetchOrders();
+    if (!socket) return;
+    socket.on('connect', fetchOrders);
+    return () => socket.off('connect', fetchOrders);
+  }, [socket, token]);
 
   useSocketRoom(socket, 'kitchen', token);
 

@@ -571,6 +571,8 @@ io.on('connection', (socket) => {
   // se rechaza si la mesa ya tiene una solicitud sin atender (sin importar el tiempo que
   // pasó), o si se resolvió hace menos de ASSISTANCE_REOPEN_COOLDOWN_MS (evita doble-click
   // apenas se habilita el botón, sin bloquear un segundo pedido de ayuda legítimo).
+  // Siempre responde assistance-ack al cliente que pidió: antes el rechazo por cooldown
+  // era silencioso y la UI quedaba en "Mozo en camino..." 60s sin ningún llamado real.
   socket.on('request-assistance', ({ tableId: rawTableId }) => {
     const tableId = String(rawTableId);
     if (!findTable(tableId)) return;
@@ -578,13 +580,25 @@ io.on('connection', (socket) => {
     const existing = activeAssistanceRequests.get(tableId);
     const now = Date.now();
     if (existing) {
-      if (!existing.resolved) return;
-      if (now - existing.resolvedAt < ASSISTANCE_REOPEN_COOLDOWN_MS) return;
+      if (!existing.resolved) {
+        // Ya hay un llamado sin atender: no se duplica la alerta al mostrador, pero
+        // para este cliente sigue valiendo "mozo en camino" (botón bloqueado).
+        socket.emit('assistance-ack', { accepted: true });
+        return;
+      }
+      const sinceResolved = now - existing.resolvedAt;
+      if (sinceResolved < ASSISTANCE_REOPEN_COOLDOWN_MS) {
+        // Rechazado por cooldown: se informa cuánto falta para poder volver a llamar,
+        // así la UI rehabilita el botón en el momento exacto.
+        socket.emit('assistance-ack', { accepted: false, retryInMs: ASSISTANCE_REOPEN_COOLDOWN_MS - sinceResolved });
+        return;
+      }
     }
 
     const request = { timestamp: now, resolved: false, resolvedAt: null };
     activeAssistanceRequests.set(tableId, request);
     persistAssistance(tableId, request);
+    socket.emit('assistance-ack', { accepted: true });
     io.to('counter').emit('assistance-requested', { tableId, timestamp: now });
   });
 

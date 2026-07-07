@@ -58,6 +58,9 @@ export default function App() {
     });
 
     setSocket(newSocket);
+    // Referencia global para los tests E2E (simulan cortes y reconexiones de socket
+    // llamando a __socket.disconnect()/connect() desde la página).
+    window.__socket = newSocket;
 
     return () => {
       newSocket.close();

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Coffee, ShoppingBag, X, Plus, Minus, CreditCard,
@@ -31,24 +31,60 @@ export default function ClientView({ tableId, socket }) {
   const [loading, setLoading] = useState(true);
   const [assistanceRequested, setAssistanceRequested] = useState(false);
 
+  // Timer local que rehabilita el botón "Llamar al Mozo". Se guarda la referencia para
+  // poder cancelarlo/rearmarlo: sin esto, el timer de un llamado anterior podía disparar
+  // a destiempo y rehabilitar el botón en medio de un llamado nuevo.
+  const assistanceTimerRef = useRef(null);
+  const armAssistanceTimer = (ms) => {
+    clearTimeout(assistanceTimerRef.current);
+    assistanceTimerRef.current = setTimeout(() => setAssistanceRequested(false), ms);
+  };
+  useEffect(() => () => clearTimeout(assistanceTimerRef.current), []);
+
   // La mesa no existe en el backend (QR viejo de una mesa dada de baja, o URL manual
   // inválida): se bloquea toda la vista en vez de dejar pedir a una mesa fantasma.
   const [tableUnavailable, setTableUnavailable] = useState(false);
 
-  // Fetch Menu
-  useEffect(() => {
-    fetch(`${BACKEND_URL}/api/menu`)
-      .then(res => res.json())
-      .then(data => {
-        setMenu(data);
-        setFilteredMenu(data);
-        setLoading(false);
+  // Sincroniza catálogo y carrito con un menú nuevo (del fetch inicial, de un
+  // menu-updated en vivo o del re-fetch tras reconectar): los items borrados o
+  // agotados se sacan del carrito y los precios editados se actualizan, para no
+  // dejar que el cliente envíe items que el backend va a rechazar en silencio.
+  const applyMenu = (newMenu) => {
+    setMenu(newMenu);
+    setCart(prevCart => prevCart
+      .map(cartItem => {
+        const current = newMenu.find(m => m.id === cartItem.id);
+        if (!current || !current.available) return null;
+        return { ...cartItem, name: current.name, price: current.price };
       })
-      .catch(err => {
-        console.error("Error fetching menu:", err);
-        setLoading(false);
-      });
-  }, []);
+      .filter(Boolean)
+    );
+  };
+
+  // Fetch del menú, también tras cada reconexión del socket: el re-join ya re-hidrata
+  // mesa y pedidos (el server los re-emite), pero un menu-updated emitido mientras
+  // estuvimos sin conexión se perdió y solo se recupera pidiendo el menú de nuevo.
+  useEffect(() => {
+    const fetchMenu = () => {
+      fetch(`${BACKEND_URL}/api/menu`)
+        .then(res => res.json())
+        .then(data => {
+          applyMenu(data);
+          setLoading(false);
+        })
+        .catch(err => {
+          console.error("Error fetching menu:", err);
+          setLoading(false);
+        });
+    };
+
+    fetchMenu();
+    if (!socket) return;
+    socket.on('connect', fetchMenu);
+    return () => socket.off('connect', fetchMenu);
+    // applyMenu solo usa setters estables de useState, no hace falta como dependencia.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socket]);
 
   // Filter Menu
   useEffect(() => {
@@ -104,24 +140,21 @@ export default function ClientView({ tableId, socket }) {
     });
 
     socket.on('assistance-resolved', () => {
+      clearTimeout(assistanceTimerRef.current);
       setAssistanceRequested(false);
     });
 
-    // El mostrador cambió el menú (alta/edición/baja/stock): se actualiza el catálogo
-    // en vivo y se sincroniza el carrito local para no dejar que el cliente intente
-    // enviar items que el backend va a rechazar en silencio (borrados o agotados se
-    // sacan del carrito; los precios editados se actualizan antes de confirmar).
-    socket.on('menu-updated', (newMenu) => {
-      setMenu(newMenu);
-      setCart(prevCart => prevCart
-        .map(cartItem => {
-          const current = newMenu.find(m => m.id === cartItem.id);
-          if (!current || !current.available) return null;
-          return { ...cartItem, name: current.name, price: current.price };
-        })
-        .filter(Boolean)
-      );
+    // Respuesta del server a request-assistance: si el llamado quedó registrado (o ya
+    // había uno en curso), el botón sigue bloqueado hasta assistance-resolved, con el
+    // respaldo de 60s por si ese evento se pierde; si lo rechazó por el cooldown
+    // post-resolución, se rehabilita justo cuando el cooldown vence (retryInMs).
+    socket.on('assistance-ack', ({ accepted, retryInMs } = {}) => {
+      armAssistanceTimer(accepted ? 60000 : retryInMs || 10000);
     });
+
+    // El mostrador cambió el menú (alta/edición/baja/stock): catálogo y carrito
+    // se sincronizan en vivo con la misma lógica del fetch inicial.
+    socket.on('menu-updated', applyMenu);
 
     return () => {
       socket.off('table-state');
@@ -129,17 +162,19 @@ export default function ClientView({ tableId, socket }) {
       socket.off('order-status-changed');
       socket.off('table-closed');
       socket.off('assistance-resolved');
+      socket.off('assistance-ack');
       socket.off('menu-updated');
     };
   }, [socket, tableId]);
 
-  // Llamar al mozo. El botón se rehabilita cuando el mostrador confirma (assistance-resolved)
-  // o, como respaldo local, a los 60s (igual al cooldown del servidor) si ese evento se pierde.
+  // Llamar al mozo. El botón se rehabilita cuando el mostrador confirma (assistance-resolved),
+  // cuando el server rechaza por cooldown (assistance-ack) o, como último respaldo, a los
+  // 60s si ninguna respuesta llega (ej. desconexión justo después de emitir).
   const callWaiter = () => {
     if (assistanceRequested) return;
     socket.emit('request-assistance', { tableId });
     setAssistanceRequested(true);
-    setTimeout(() => setAssistanceRequested(false), 60000);
+    armAssistanceTimer(60000);
   };
 
   // Add item to cart

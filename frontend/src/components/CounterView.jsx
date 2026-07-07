@@ -28,30 +28,48 @@ export default function CounterView({ socket, token, onLogout }) {
   const emptyMenuForm = { id: null, name: '', description: '', price: '', category: 'bebidas_calientes' };
   const [menuForm, setMenuForm] = useState(emptyMenuForm);
 
-  // Load initial state
+  // Estado inicial, re-pedido también tras cada reconexión del socket: los eventos
+  // emitidos mientras la tablet estuvo sin conexión (microcorte de Wi-Fi, cambio de
+  // red) se perdieron, así que al volver se rehidrata todo desde el server en vez de
+  // quedarse con un panel congelado. El mismo endpoint trae mesas, pedidos, llamados
+  // de asistencia y la caja del día (calculada por el server desde la DB, así una
+  // recarga de página tampoco la resetea a $0).
   useEffect(() => {
-    fetch(`${BACKEND_URL}/api/initial-state`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.tables) setTables(data.tables);
-        if (data.orders) setActiveOrders(data.orders);
-        if (data.assistanceRequests) setAssistanceRequests(data.assistanceRequests);
-        // La caja del día viene calculada por el server (pedidos cobrados hoy en la DB),
-        // así recargar la página no la resetea a $0.
-        if (data.dailySales !== undefined) setDailySales(data.dailySales);
+    const fetchInitialState = () => {
+      fetch(`${BACKEND_URL}/api/initial-state`, {
+        headers: { Authorization: `Bearer ${token}` }
       })
-      .catch(err => console.error("Error fetching initial counter state:", err));
-  }, [token]);
+        .then(res => res.json())
+        .then(data => {
+          if (data.tables) setTables(data.tables);
+          if (data.orders) setActiveOrders(data.orders);
+          if (data.assistanceRequests) setAssistanceRequests(data.assistanceRequests);
+          if (data.dailySales !== undefined) setDailySales(data.dailySales);
+        })
+        .catch(err => console.error("Error fetching initial counter state:", err));
+    };
 
-  // Menú, para poder agregar productos a un pedido al editarlo
+    fetchInitialState();
+    if (!socket) return;
+    socket.on('connect', fetchInitialState);
+    return () => socket.off('connect', fetchInitialState);
+  }, [socket, token]);
+
+  // Menú, para poder agregar productos a un pedido al editarlo. También se re-pide al
+  // reconectar: un menu-updated perdido dejaría precios/stock viejos en el panel.
   useEffect(() => {
-    fetch(`${BACKEND_URL}/api/menu`)
-      .then(res => res.json())
-      .then(setMenu)
-      .catch(err => console.error("Error fetching menu:", err));
-  }, []);
+    const fetchMenu = () => {
+      fetch(`${BACKEND_URL}/api/menu`)
+        .then(res => res.json())
+        .then(setMenu)
+        .catch(err => console.error("Error fetching menu:", err));
+    };
+
+    fetchMenu();
+    if (!socket) return;
+    socket.on('connect', fetchMenu);
+    return () => socket.off('connect', fetchMenu);
+  }, [socket]);
 
   useSocketRoom(socket, 'counter', token);
 
