@@ -73,7 +73,7 @@ test('la mesa pasa a "comiendo" recién cuando todos sus pedidos están entregad
   kitchen.socket.close();
 });
 
-test('entregar un pedido no pisa la cuenta pedida; pedir algo más la cancela y sigue sumando', async () => {
+test('la cuenta se pide con todo entregado; pedir algo más la cancela y sigue sumando', async () => {
   const kitchen = await connectStaff('kitchen', 'cocina123');
   const counter = await connectStaff('counter', 'mostrador123');
   const billCancelled = new Promise(resolve => {
@@ -87,12 +87,17 @@ test('entregar un pedido no pisa la cuenta pedida; pedir algo más la cancela y 
   kitchen.socket.emit('update-order-status', { orderId: order1.id, status: 'listo' });
   await settle();
 
-  // La mesa pide la cuenta mientras el mozo le lleva el pedido
+  // Con el pedido todavía sin entregar, el server rechaza el pedido de cuenta
   client.emit('request-bill', { tableId: '11', paymentMethod: 'efectivo' });
   await settle();
+  let table = await tableOf(counter.token, '11');
+  expect(table.status).toBe('pedido_pendiente');
+
   kitchen.socket.emit('update-order-status', { orderId: order1.id, status: 'entregado' });
   await settle();
-  let table = await tableOf(counter.token, '11');
+  client.emit('request-bill', { tableId: '11', paymentMethod: 'efectivo' });
+  await settle();
+  table = await tableOf(counter.token, '11');
   expect(table.status).toBe('esperando_cuenta');
   expect(table.paymentMethod).toBe('efectivo');
 

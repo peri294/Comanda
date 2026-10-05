@@ -71,6 +71,11 @@ const INITIAL_TABLES = Array.from({ length: 12 }, (_, i) => ({
 // un producto con una categoría inventada no tendría pestaña donde aparecer.
 const MENU_CATEGORIES = ['bebidas_calientes', 'bebidas_frias', 'pasteleria', 'salado'];
 
+// Recorrido de un pedido en cocina, en orden. 'cancelado' no está: lo pone solo el Mostrador.
+const KITCHEN_FLOW = ['pendiente', 'en_preparacion', 'listo', 'entregado'];
+
+const PAYMENT_METHODS = ['efectivo', 'tarjeta'];
+
 // Semilla del menú para el primer arranque (y para /api/test/reset). Después de
 // sembrarse, la copia de trabajo es menuCache y la fuente durable es la tabla
 // `menu` en SQLite: este array ya no se consulta en los flujos normales.
@@ -465,10 +470,16 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Actualizar estado del pedido (desde Cocina)
+  // Solo estados reales del flujo de cocina y solo hacia adelante (puede saltear pasos,
+  // nunca retroceder): antes se guardaba cualquier string, y un pedido ya cobrado o
+  // cancelado podía "resucitar" en la pantalla de cocina.
   socket.on('update-order-status', ({ orderId, status }) => {
     if (!socket.data.roles?.has('kitchen')) return;
     const order = orders.find(o => o.id === orderId);
-    if (!order) return;
+    if (!order || order.archived) return;
+    const from = KITCHEN_FLOW.indexOf(order.status);
+    const to = KITCHEN_FLOW.indexOf(status);
+    if (from === -1 || to <= from) return;
     order.status = status;
 
     // La mesa pasa a 'comiendo' recién cuando TODOS sus pedidos activos están entregados
@@ -550,6 +561,10 @@ io.on('connection', (socket) => {
     const tableId = String(rawTableId);
     const table = findTable(tableId);
     if (!table) return;
+    // Mismas reglas que la UI del cliente (el botón solo aparece en "comiendo"): método
+    // de pago conocido y la mesa con todo entregado. Antes cualquier valor que no fuera
+    // 'efectivo' se tomaba como tarjeta, y una mesa libre en $0 podía "pedir la cuenta".
+    if (!PAYMENT_METHODS.includes(paymentMethod) || table.status !== 'comiendo') return;
 
     table.status = paymentMethod === 'efectivo' ? 'esperando_cuenta' : 'pagando_tarjeta';
     table.paymentMethod = paymentMethod;
