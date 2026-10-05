@@ -536,7 +536,7 @@ export default function CounterView({ socket, token, onLogout }) {
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {assistanceRequests.map(req => (
-                    <div key={req.tableId} style={{
+                    <div key={req.tableId} className="assistance-row" style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       padding: '10px 12px', borderRadius: '10px',
                       background: 'rgba(231, 111, 81, 0.1)', border: '1px solid rgba(231, 111, 81, 0.3)'

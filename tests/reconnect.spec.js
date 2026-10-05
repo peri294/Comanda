@@ -28,7 +28,9 @@ test('cooldown de asistencia: el rechazo rehabilita el botón sin alertar al mos
   await llamarMozoBtn.click();
   await expect(llamarMozoBtn).toBeDisabled();
 
-  const atendidaBtn = counterPage.locator('div:has-text("Mesa 5")').getByRole('button', { name: /atendida/i });
+  // Fila exacta de la Mesa 5: con otros specs en paralelo puede haber más llamados en pantalla
+  const atendidaBtn = counterPage.locator('.assistance-row', { has: counterPage.getByText('Mesa 5', { exact: true }) })
+    .getByRole('button', { name: /atendida/i });
   await expect(atendidaBtn).toBeVisible({ timeout: 15000 });
   await atendidaBtn.click();
   await expect(llamarMozoBtn).toBeEnabled({ timeout: 10000 });

@@ -32,7 +32,9 @@ test('flujo de asistencia y cuenta parcial', async ({ browser }) => {
   await expect(alertaMesa).toBeVisible({ timeout: 15000 });
 
   // 2. ATENDER LLAMADO Y VERIFICAR REHABILITACIÓN EN EL CLIENTE
-  await counterPage.locator('div:has-text("Mesa 3")').getByRole('button', { name: /atendida/i }).click();
+  // Fila exacta de la Mesa 3: con otros specs en paralelo puede haber más llamados en pantalla
+  await counterPage.locator('.assistance-row', { has: counterPage.getByText('Mesa 3', { exact: true }) })
+    .getByRole('button', { name: /atendida/i }).click();
 
   // Validar que el botón vuelve a habilitarse en el cliente
   await expect(llamarMozoBtn).toBeEnabled({ timeout: 10000 });
