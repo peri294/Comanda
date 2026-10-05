@@ -6,10 +6,33 @@ import {
 } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
+import { MENU_CATEGORIES } from '../menuCategories';
+
+const categories = [{ id: 'todos', label: 'Todo' }, ...MENU_CATEGORIES];
+
+const categoryEmojis = {
+  bebidas_calientes: '☕',
+  bebidas_frias: '🍹',
+  pasteleria: '🍰',
+  salado: '🥪'
+};
+
+// Pantalla completa que reemplaza a la vista de la mesa (mesa no disponible, visita
+// terminada o mesa bloqueada).
+function Notice({ icon: Icon, iconColor, title, children }) {
+  return (
+    <div className="animate-fade-in" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+      <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', maxWidth: '420px' }}>
+        <Icon size={48} style={{ color: iconColor, margin: '0 auto 16px auto' }} />
+        <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>{title}</h2>
+        <p style={{ color: 'var(--text-secondary)' }}>{children}</p>
+      </div>
+    </div>
+  );
+}
 
 export default function ClientView({ tableId, qrToken, socket }) {
   const [menu, setMenu] = useState([]);
-  const [filteredMenu, setFilteredMenu] = useState([]);
   const [activeCategory, setActiveCategory] = useState('todos');
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -73,32 +96,16 @@ export default function ClientView({ tableId, qrToken, socket }) {
     const fetchMenu = () => {
       fetch(`${BACKEND_URL}/api/menu`)
         .then(res => res.json())
-        .then(data => {
-          applyMenu(data);
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error("Error fetching menu:", err);
-          setLoading(false);
-        });
+        .then(applyMenu)
+        .catch(err => console.error("Error fetching menu:", err))
+        .finally(() => setLoading(false));
     };
 
     fetchMenu();
     if (!socket) return;
     socket.on('connect', fetchMenu);
     return () => socket.off('connect', fetchMenu);
-    // applyMenu solo usa setters estables de useState, no hace falta como dependencia.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket]);
-
-  // Filter Menu
-  useEffect(() => {
-    if (activeCategory === 'todos') {
-      setFilteredMenu(menu);
-    } else {
-      setFilteredMenu(menu.filter(item => item.category === activeCategory));
-    }
-  }, [activeCategory, menu]);
 
   // El token del QR viaja en el join: el server ata esta conexión a la mesa solo si es válido.
   // Con la visita terminada no se vuelve a unir, ni siquiera al reconectar el socket: si
@@ -119,11 +126,15 @@ export default function ClientView({ tableId, qrToken, socket }) {
       }
     });
 
-    // El mostrador dio de baja la mesa o regeneró su QR mientras la estábamos mirando
-    socket.on('table-removed', () => {
+    const clearVisit = () => {
       setCart([]);
       setOrders({});
       setNotes('');
+    };
+
+    // El mostrador dio de baja la mesa o regeneró su QR mientras la estábamos mirando
+    socket.on('table-removed', () => {
+      clearVisit();
       setTableUnavailable(true);
     });
 
@@ -134,9 +145,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
     });
 
     socket.on('table-closed', () => {
-      setCart([]);
-      setOrders({});
-      setNotes('');
+      clearVisit();
       setIsCartOpen(false);
       setAssistanceRequested(false);
       setVisitEnded(true);
@@ -224,32 +233,25 @@ export default function ClientView({ tableId, qrToken, socket }) {
   const billRequested = tableState.status === 'esperando_cuenta' || tableState.status === 'pagando_tarjeta';
 
   // Send Order: cada envío es una comanda nueva para cocina, nunca se modifica un
-  // pedido ya enviado (la cuenta de la mesa suma todos los pedidos igual).
+  // pedido ya enviado (la cuenta de la mesa suma todos los pedidos igual). La mesa no
+  // viaja en el payload (el server usa la de la conexión) y nombre y precio tampoco:
+  // el server los toma de su menú.
   const submitOrder = () => {
     if (cart.length === 0) return;
 
-    // La mesa no viaja en el payload: el server usa la mesa a la que se unió esta conexión.
-    const orderData = {
-      items: cart.map(item => ({
-        productId: item.id,
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity
-      })),
+    socket.emit('new-order', {
+      items: cart.map(item => ({ productId: item.id, quantity: item.quantity })),
       notes
-    };
-
-    socket.emit('new-order', orderData);
+    });
 
     setCart([]);
     setNotes('');
     setIsCartOpen(false);
   };
 
-  // Close account (request bill)
-  const requestBill = (method) => {
-    socket.emit('request-bill', { paymentMethod: method });
-  };
+  const requestBill = (paymentMethod) => socket.emit('request-bill', { paymentMethod });
+
+  const filteredMenu = activeCategory === 'todos' ? menu : menu.filter(item => item.category === activeCategory);
 
   if (loading) {
     return (
@@ -262,29 +264,17 @@ export default function ClientView({ tableId, qrToken, socket }) {
 
   if (tableUnavailable) {
     return (
-      <div className="animate-fade-in" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
-        <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', maxWidth: '420px' }}>
-          <Coffee size={48} style={{ color: 'var(--text-muted)', margin: '0 auto 16px auto' }} />
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>Esta mesa no está disponible</h2>
-          <p style={{ color: 'var(--text-secondary)' }}>
-            El QR de la mesa {tableId} no es válido o la mesa fue dada de baja. Por favor escaneá de nuevo el QR de tu mesa o consultá al personal de la cafetería.
-          </p>
-        </div>
-      </div>
+      <Notice icon={Coffee} iconColor="var(--text-muted)" title="Esta mesa no está disponible">
+        El QR de la mesa {tableId} no es válido o la mesa fue dada de baja. Por favor escaneá de nuevo el QR de tu mesa o consultá al personal de la cafetería.
+      </Notice>
     );
   }
 
   if (visitEnded) {
     return (
-      <div className="animate-fade-in" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
-        <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', maxWidth: '420px' }}>
-          <CheckCircle size={48} style={{ color: 'var(--success)', margin: '0 auto 16px auto' }} />
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>¡Gracias por tu visita!</h2>
-          <p style={{ color: 'var(--text-secondary)' }}>
-            La cuenta de la mesa {tableId} ya está cerrada. Si querés volver a pedir, escaneá de nuevo el QR de la mesa.
-          </p>
-        </div>
-      </div>
+      <Notice icon={CheckCircle} iconColor="var(--success)" title="¡Gracias por tu visita!">
+        La cuenta de la mesa {tableId} ya está cerrada. Si querés volver a pedir, escaneá de nuevo el QR de la mesa.
+      </Notice>
     );
   }
 
@@ -292,34 +282,11 @@ export default function ClientView({ tableId, qrToken, socket }) {
   // mesa puntual). Una mesa bloqueada siempre está vacía, así que no hay cuenta que mostrar.
   if (tableState.enabled === false) {
     return (
-      <div className="animate-fade-in" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
-        <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', maxWidth: '420px' }}>
-          <Coffee size={48} style={{ color: 'var(--text-muted)', margin: '0 auto 16px auto' }} />
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>Mesa no habilitada</h2>
-          <p style={{ color: 'var(--text-secondary)' }}>
-            La mesa {tableId} todavía no está habilitada para pedir. Por favor consultá al personal de la cafetería.
-          </p>
-        </div>
-      </div>
+      <Notice icon={Coffee} iconColor="var(--text-muted)" title="Mesa no habilitada">
+        La mesa {tableId} todavía no está habilitada para pedir. Por favor consultá al personal de la cafetería.
+      </Notice>
     );
   }
-
-  // Categories helper
-  const categories = [
-    { id: 'todos', label: 'Todo' },
-    { id: 'bebidas_calientes', label: 'Café Caliente' },
-    { id: 'bebidas_frias', label: 'Fríos y Licuados' },
-    { id: 'pasteleria', label: 'Pastelería' },
-    { id: 'salado', label: 'Salado' }
-  ];
-
-  // Map category code to emoji/label
-  const categoryEmojis = {
-    bebidas_calientes: '☕',
-    bebidas_frias: '🍹',
-    pasteleria: '🍰',
-    salado: '🥪'
-  };
 
   return (
     <div className="animate-fade-in" style={{ paddingBottom: '100px' }}>
@@ -462,7 +429,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
       )}
 
       {/* Screen blocker when waiting for bill confirmation */}
-      {(tableState.status === 'esperando_cuenta' || tableState.status === 'pagando_tarjeta') && (
+      {billRequested && (
         <div className="glass-panel" style={{ padding: '30px', textAlign: 'center', marginBottom: '24px', border: '1px solid var(--accent-gold)' }}>
           <Bell size={48} className="status-pedido_pendiente" style={{ margin: '0 auto 16px auto', animation: 'pulse-glow 1.5s infinite' }} />
           <h3 style={{ fontSize: '1.3rem', fontWeight: 700 }}>Cuenta Solicitada</h3>
@@ -480,68 +447,65 @@ export default function ClientView({ tableId, qrToken, socket }) {
         </div>
       )}
 
-      {/* Menu and Ordering Interface */}
-      {(tableState.status === 'libre' || tableState.status === 'pedido_pendiente' || tableState.status === 'comiendo' || billRequested) && (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Nuestro Menú</h3>
-          </div>
+      {/* Menú: se muestra en todos los estados de la mesa (con la cuenta pedida también
+          se puede seguir pidiendo, y el pedido nuevo la cancela) */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h3 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Nuestro Menú</h3>
+      </div>
 
-          {/* Categories Filter Bar */}
-          <div className="filter-bar">
-            {categories.map(cat => (
-              <button
-                key={cat.id}
-                className={`filter-btn ${activeCategory === cat.id ? 'active' : ''}`}
-                onClick={() => setActiveCategory(cat.id)}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
+      {/* Categories Filter Bar */}
+      <div className="filter-bar">
+        {categories.map(cat => (
+          <button
+            key={cat.id}
+            className={`filter-btn ${activeCategory === cat.id ? 'active' : ''}`}
+            onClick={() => setActiveCategory(cat.id)}
+          >
+            {cat.label}
+          </button>
+        ))}
+      </div>
 
-          {/* Menu Grid */}
-          <div className="menu-grid">
-            {filteredMenu.map(item => (
-              <div key={item.id} className="glass-panel menu-card" style={item.available === false ? { opacity: 0.55 } : undefined}>
-                <div className="menu-card-img-container">
-                  <div className="menu-card-img-placeholder">
-                    {categoryEmojis[item.category] || '☕'}
-                  </div>
-                </div>
-                <div className="menu-card-content">
-                  <span className="menu-card-category">
-                    {item.category.replace('_', ' ')}
-                  </span>
-                  <h4 className="menu-card-title">{item.name}</h4>
-                  <p className="menu-card-description">{item.description}</p>
-
-                  <div className="menu-card-footer">
-                    <span className="menu-card-price">${item.price}</span>
-                    {item.available === false ? (
-                      <button
-                        className="btn-secondary"
-                        style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem', cursor: 'not-allowed' }}
-                        disabled
-                      >
-                        Agotado
-                      </button>
-                    ) : (
-                      <button
-                        className="btn-primary"
-                        style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem' }}
-                        onClick={() => addToCart(item)}
-                      >
-                        <Plus size={14} /> Agregar
-                      </button>
-                    )}
-                  </div>
-                </div>
+      {/* Menu Grid */}
+      <div className="menu-grid">
+        {filteredMenu.map(item => (
+          <div key={item.id} className="glass-panel menu-card" style={item.available === false ? { opacity: 0.55 } : undefined}>
+            <div className="menu-card-img-container">
+              <div className="menu-card-img-placeholder">
+                {categoryEmojis[item.category] || '☕'}
               </div>
-            ))}
+            </div>
+            <div className="menu-card-content">
+              <span className="menu-card-category">
+                {item.category.replace('_', ' ')}
+              </span>
+              <h4 className="menu-card-title">{item.name}</h4>
+              <p className="menu-card-description">{item.description}</p>
+
+              <div className="menu-card-footer">
+                <span className="menu-card-price">${item.price}</span>
+                {item.available === false ? (
+                  <button
+                    className="btn-secondary"
+                    style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem', cursor: 'not-allowed' }}
+                    disabled
+                  >
+                    Agotado
+                  </button>
+                ) : (
+                  <button
+                    className="btn-primary"
+                    style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem' }}
+                    onClick={() => addToCart(item)}
+                  >
+                    <Plus size={14} /> Agregar
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
-        </>
-      )}
+        ))}
+      </div>
 
       {/* Floating Cart Button (portaled to <body> so it stays fixed to the viewport,
           not to the animated .animate-fade-in wrapper, which creates its own containing block) */}

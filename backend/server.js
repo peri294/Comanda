@@ -250,38 +250,25 @@ const getMenuItem = (productId) => menuCache.find(m => m.id === productId);
 // el menú del servidor, así nadie puede pedir gratis (o más caro) manipulando el payload.
 // También descarta productos inexistentes, agotados (available = false: la UI ya no
 // deja pedirlos, pero un payload manual podría intentarlo igual) y cantidades inválidas.
-const sanitizeItems = (items) => {
-  if (!Array.isArray(items)) return [];
-  return items.reduce((acc, item) => {
-    const menuItem = getMenuItem(item?.productId);
-    const quantity = Math.floor(Number(item?.quantity));
-    if (menuItem && menuItem.available && Number.isFinite(quantity) && quantity > 0) {
-      acc.push({ productId: menuItem.id, name: menuItem.name, price: menuItem.price, quantity });
-    }
-    return acc;
-  }, []);
-};
-
-// Variante para edit-order: "agotado" significa *no pedir más*, no *borrar lo ya pedido*.
-// Los items que ya estaban en el pedido se conservan con su snapshot (nombre/precio al
-// momento de pedirlos), aunque el producto se haya agotado o borrado del menú después
-// — si no, editar un pedido con un producto discontinuado lo haría desaparecer en
-// silencio (y con un solo item, cancelaría el pedido entero). Solo los items nuevos
-// se validan estrictamente contra el menú vigente y su disponibilidad.
-const sanitizeEditItems = (order, rawItems) => {
+//
+// previousItems es para edit-order: "agotado" significa *no pedir más*, no *borrar lo
+// ya pedido*. Los items que ya estaban en el pedido se conservan con su snapshot
+// (nombre/precio al momento de pedirlos), aunque el producto se haya agotado o borrado
+// del menú después — si no, editar un pedido con un producto discontinuado lo haría
+// desaparecer en silencio (y con un solo item, cancelaría el pedido entero). Solo los
+// items nuevos se validan estrictamente contra el menú vigente y su disponibilidad.
+const sanitizeItems = (rawItems, previousItems = []) => {
   if (!Array.isArray(rawItems)) return [];
   return rawItems.reduce((acc, item) => {
     const quantity = Math.floor(Number(item?.quantity));
     if (!Number.isFinite(quantity) || quantity <= 0) return acc;
 
-    const existing = order.items.find(i => i.productId === item?.productId);
+    const existing = previousItems.find(i => i.productId === item?.productId);
+    const menuItem = getMenuItem(item?.productId);
     if (existing) {
       acc.push({ productId: existing.productId, name: existing.name, price: existing.price, quantity });
-    } else {
-      const menuItem = getMenuItem(item?.productId);
-      if (menuItem && menuItem.available) {
-        acc.push({ productId: menuItem.id, name: menuItem.name, price: menuItem.price, quantity });
-      }
+    } else if (menuItem?.available) {
+      acc.push({ productId: menuItem.id, name: menuItem.name, price: menuItem.price, quantity });
     }
     return acc;
   }, []);
@@ -307,6 +294,10 @@ const sanitizeMenuFields = ({ name, description, price, category, image } = {}) 
   };
 };
 
+// Pedidos que todavía cuentan para la mesa (ni cobrados ni cancelados)
+const activeOrdersOf = (tableId) => orders.filter(o => o.tableId === tableId && !o.archived);
+const itemsTotal = (items) => items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
 const isBillRequested = (table) => table.status === 'esperando_cuenta' || table.status === 'pagando_tarjeta';
 
 // Deriva el estado de la mesa de TODOS sus pedidos activos, no del último evento:
@@ -316,7 +307,7 @@ const isBillRequested = (table) => table.status === 'esperando_cuenta' || table.
 // sin pedidos activos tampoco (eso lo resuelve recomputeTableTotal liberando la mesa).
 const syncTableStatus = (table) => {
   if (isBillRequested(table)) return;
-  const activeOrders = orders.filter(o => o.tableId === table.id && !o.archived);
+  const activeOrders = activeOrdersOf(table.id);
   if (activeOrders.length === 0) return;
   table.status = activeOrders.every(o => o.status === 'entregado') ? 'comiendo' : 'pedido_pendiente';
 };
@@ -325,8 +316,8 @@ const syncTableStatus = (table) => {
 const recomputeTableTotal = (tableId) => {
   const table = findTable(tableId);
   if (!table) return;
-  const activeOrders = orders.filter(o => o.tableId === tableId && !o.archived);
-  table.total = activeOrders.reduce((acc, o) => acc + o.items.reduce((sum, item) => sum + item.price * item.quantity, 0), 0);
+  const activeOrders = activeOrdersOf(tableId);
+  table.total = activeOrders.reduce((acc, o) => acc + itemsTotal(o.items), 0);
 
   // Si se cancela el único pedido pendiente, la mesa no puede quedar mostrando
   // "pedido pendiente"/"comiendo" fantasma con $0 y ningún pedido real detrás.
@@ -361,8 +352,7 @@ const broadcastOrders = () => {
 
 const broadcastTables = () => io.to('counter').emit('tables-updated', tables);
 
-const isTableEmpty = (table) =>
-  table.status === 'libre' && !orders.some(o => o.tableId === table.id && !o.archived);
+const isTableEmpty = (table) => table.status === 'libre' && activeOrdersOf(table.id).length === 0;
 
 // Una mesa bloqueada siempre está vacía: si no, el próximo que escaneara el QR al
 // habilitarla vería la cuenta de los clientes anteriores. Por eso bloquear una mesa
@@ -388,6 +378,25 @@ const setTablesEnabled = (targets, enabled) => {
   runInTransaction(() => changed.forEach(persistTable));
   broadcastTables();
   changed.forEach(t => io.to(`table-${t.id}`).emit('table-state', t));
+};
+
+// Después de que el mostrador edita o cancela un pedido: recalcula la mesa, persiste y
+// avisa a todos. Cocina recibe una alerta aparte porque el pedido ya estaba en su
+// pantalla y cambió; la mesa, su total y estado nuevos (y puede haber quedado bloqueada).
+const applyCounterCorrection = (order) => {
+  recomputeTableTotal(order.tableId);
+  const table = findTable(order.tableId);
+
+  runInTransaction(() => {
+    persistOrder(order);
+    if (table) persistTable(table);
+  });
+
+  broadcastOrders();
+  broadcastTables();
+  io.to(`table-${order.tableId}`).emit('order-status-changed', order);
+  io.to(`table-${order.tableId}`).emit('table-state', table);
+  io.to('kitchen').emit('order-modified', { order, reason: order.archived ? 'cancelled' : 'edited' });
 };
 
 // --- ENDPOINTS HTTP ---
@@ -462,6 +471,10 @@ if (process.env.NODE_ENV !== 'production') {
 io.on('connection', (socket) => {
   console.log(`Cliente conectado: ${socket.id}`);
 
+  // Evento de personal: se ignora si esta conexión no se unió con ese rol (join con token).
+  const staffOn = (role, event, handler) =>
+    socket.on(event, (...args) => { if (socket.data.roles?.has(role)) handler(...args); });
+
   // Unirse a un rol/canal específico. 'kitchen' y 'counter' son canales de personal
   // y requieren un token de sesión válido; 'table-X' requiere el token del QR de la mesa.
   socket.on('join', ({ role, token } = {}) => {
@@ -506,9 +519,7 @@ io.on('connection', (socket) => {
       // cliente pueda armar "Mi Cuenta Parcial" aunque recién esté entrando/recargando
       // la página con pedidos ya en curso. Reutiliza el mismo evento que usan las
       // actualizaciones en vivo, así el cliente no necesita un handler distinto.
-      orders
-        .filter(o => o.tableId === tableId && !o.archived)
-        .forEach(o => socket.emit('order-status-changed', o));
+      activeOrdersOf(tableId).forEach(o => socket.emit('order-status-changed', o));
     }
   });
 
@@ -529,9 +540,6 @@ io.on('connection', (socket) => {
     const items = sanitizeItems(orderData.items);
     if (items.length === 0) return; // nada válido para pedir (menú manipulado, cantidades inválidas, etc.)
 
-    // Calcular total del pedido
-    const orderTotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-
     const newOrder = {
       id: `ord-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       tableId,
@@ -551,7 +559,7 @@ io.on('connection', (socket) => {
     // Actualizar estado de la mesa
     table.status = 'pedido_pendiente';
     table.currentOrderId = newOrder.id;
-    table.total += orderTotal;
+    table.total += itemsTotal(items);
     if (billCancelled) table.paymentMethod = null;
     if (paymentMethod) table.paymentMethod = paymentMethod;
 
@@ -574,8 +582,7 @@ io.on('connection', (socket) => {
   // Solo estados reales del flujo de cocina y solo hacia adelante (puede saltear pasos,
   // nunca retroceder): antes se guardaba cualquier string, y un pedido ya cobrado o
   // cancelado podía "resucitar" en la pantalla de cocina.
-  socket.on('update-order-status', ({ orderId, status }) => {
-    if (!socket.data.roles?.has('kitchen')) return;
+  staffOn('kitchen', 'update-order-status', ({ orderId, status }) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || order.archived) return;
     const from = KITCHEN_FLOW.indexOf(order.status);
@@ -602,14 +609,13 @@ io.on('connection', (socket) => {
   // Evento: Corregir un pedido desde el Mostrador (error humano, antes de cobrar).
   // Reemplaza la lista de items completa (permite sacar, cambiar cantidad y agregar).
   // Solo mientras cocina no lo empezó a preparar, para no confundir al cocinero.
-  socket.on('edit-order', ({ orderId, items: rawItems }) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'edit-order', ({ orderId, items: rawItems }) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || order.archived || order.status !== 'pendiente') return;
 
-    // Variante especial de sanitización: conserva los items ya pedidos aunque el
-    // producto se haya agotado/borrado del menú después (ver sanitizeEditItems).
-    const items = sanitizeEditItems(order, rawItems);
+    // Conserva los items ya pedidos aunque el producto se haya agotado/borrado del
+    // menú después (ver sanitizeItems).
+    const items = sanitizeItems(rawItems, order.items);
     // Si el mostrador saca todos los items (o no quedó ninguno válido), es lo mismo
     // que cancelar el pedido entero.
     if (items.length === 0) {
@@ -619,46 +625,17 @@ io.on('connection', (socket) => {
       order.items = items;
     }
 
-    recomputeTableTotal(order.tableId);
-
-    runInTransaction(() => {
-      persistOrder(order);
-      const table = findTable(order.tableId);
-      if (table) persistTable(table);
-    });
-
-    broadcastOrders();
-    broadcastTables();
-    io.to(`table-${order.tableId}`).emit('order-status-changed', order);
-    // El total y el estado de la mesa cambiaron (y puede haber quedado bloqueada).
-    io.to(`table-${order.tableId}`).emit('table-state', findTable(order.tableId));
-    // Alerta aparte para cocina: el pedido ya estaba en su pantalla y cambió.
-    io.to('kitchen').emit('order-modified', { order, reason: order.archived ? 'cancelled' : 'edited' });
+    applyCounterCorrection(order);
   });
 
   // Evento: Cancelar un pedido completo desde el Mostrador (mismas reglas que edit-order).
-  socket.on('cancel-order', ({ orderId }) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'cancel-order', ({ orderId }) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || order.archived || order.status !== 'pendiente') return;
 
     order.status = 'cancelado';
     order.archived = true;
-
-    recomputeTableTotal(order.tableId);
-
-    runInTransaction(() => {
-      persistOrder(order);
-      const table = findTable(order.tableId);
-      if (table) persistTable(table);
-    });
-
-    broadcastOrders();
-    broadcastTables();
-    io.to(`table-${order.tableId}`).emit('order-status-changed', order);
-    // El total y el estado de la mesa cambiaron (y puede haber quedado bloqueada).
-    io.to(`table-${order.tableId}`).emit('table-state', findTable(order.tableId));
-    io.to('kitchen').emit('order-modified', { order, reason: 'cancelled' });
+    applyCounterCorrection(order);
   });
 
   // Evento: Solicitar cierre de cuenta (desde Cliente)
@@ -721,8 +698,7 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Marcar una solicitud de asistencia como atendida (desde Mostrador)
-  socket.on('resolve-assistance', ({ tableId: rawTableId }) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'resolve-assistance', ({ tableId: rawTableId }) => {
     const tableId = String(rawTableId);
 
     const existing = activeAssistanceRequests.get(tableId);
@@ -738,8 +714,7 @@ io.on('connection', (socket) => {
   // Evento: Agregar una mesa nueva (desde Mostrador). Sin número pedido, se asigna el
   // más chico sin usar. La mesa nace con un token nuevo: reponer una mesa dada de baja
   // necesita un QR nuevo (el viejo, con el token anterior, ya no vale).
-  socket.on('add-table', ({ id } = {}) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'add-table', ({ id } = {}) => {
 
     let tableId;
     if (id !== undefined && id !== null && String(id).trim() !== '') {
@@ -766,12 +741,10 @@ io.on('connection', (socket) => {
   // conservan su número y su QR impreso— pero solo si
   // está libre: sin pedidos activos ni llamados al mozo pendientes. Una mesa ocupada
   // se cobra/cierra primero; si no, se destruiría consumo en curso sin registro.
-  socket.on('remove-table', ({ tableId: rawTableId } = {}) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'remove-table', ({ tableId: rawTableId } = {}) => {
     const tableId = String(rawTableId);
     const table = findTable(tableId);
-    if (!table || table.status !== 'libre') return;
-    if (orders.some(o => o.tableId === tableId && !o.archived)) return;
+    if (!table || !isTableEmpty(table)) return;
     const assistance = activeAssistanceRequests.get(tableId);
     if (assistance && !assistance.resolved) return;
 
@@ -793,8 +766,7 @@ io.on('connection', (socket) => {
   // deja de valer al instante y quien esté conectado con él pierde el acceso. Se permite
   // con la mesa ocupada a propósito, porque ese es justamente el caso urgente; el consumo
   // de la mesa no se toca, y los clientes sentados escanean el QR nuevo.
-  socket.on('regenerate-table-qr', ({ tableId: rawTableId } = {}) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'regenerate-table-qr', ({ tableId: rawTableId } = {}) => {
     const table = findTable(String(rawTableId));
     if (!table) return;
 
@@ -812,8 +784,7 @@ io.on('connection', (socket) => {
   // Las mesas con clientes se bloquean recién al cobrarlas (ver applyEnabled).
 
   // Evento: Habilitar o bloquear una mesa puntual
-  socket.on('set-table-enabled', ({ tableId: rawTableId, enabled } = {}) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'set-table-enabled', ({ tableId: rawTableId, enabled } = {}) => {
     if (typeof enabled !== 'boolean') return;
     const table = findTable(String(rawTableId));
     if (!table) return;
@@ -821,86 +792,82 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Iniciar el día (habilita todas las mesas)
-  socket.on('start-day', () => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'start-day', () => {
     setTablesEnabled(tables, true);
   });
 
   // Evento: Cerrar el día. Bloquea las mesas vacías en el acto y marca las ocupadas para
   // bloquearse al cobrarlas, así no hace falta cobrar todo para cerrar. Independiente
   // del cierre de caja: el Mostrador puede hacer los dos juntos, pero no es obligatorio.
-  socket.on('end-day', () => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'end-day', () => {
     setTablesEnabled(tables, false);
   });
 
   // Evento: Confirmar cobro y liberar mesa (desde Mostrador/Caja)
-  socket.on('close-table', ({ tableId: rawTableId }) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'close-table', ({ tableId: rawTableId }) => {
     const tableId = String(rawTableId);
     const tableIndex = tables.findIndex(t => t.id === tableId);
-    if (tableIndex !== -1) {
-      // Marcar los pedidos de esa mesa como entregados y archivados (mesa cobrada),
-      // sellando el momento del cobro (closedAt) para la "Caja del Día". Los pedidos
-      // cancelados no se tocan: nunca se cobraron, no pueden "resucitar" a entregado
-      // ni contar como venta (antes este forEach los pisaba, inflando la caja).
-      const closedAt = new Date().toISOString();
-      const closedOrders = [];
-      orders.forEach(o => {
-        if (o.tableId === tableId && o.status !== 'cancelado') {
-          o.status = 'entregado';
-          o.archived = true;
-          o.closedAt = closedAt;
-          closedOrders.push(o);
-        }
-      });
+    if (tableIndex === -1) return;
 
-      // Resetear mesa a valores iniciales. El token se conserva: el QR impreso en la
-      // mesa tiene que seguir sirviendo para los próximos clientes. Si el Mostrador
-      // pidió bloquearla mientras tenía clientes (o se cerró el día), se bloquea ahora.
-      const previous = tables[tableIndex];
-      tables[tableIndex] = {
-        id: tableId,
-        status: 'libre',
-        currentOrderId: null,
-        paymentMethod: null,
-        total: 0,
-        qrToken: previous.qrToken,
-        enabled: previous.enabled && !previous.blockOnClose,
-        blockOnClose: false
-      };
-      activeAssistanceRequests.delete(tableId);
+    // Marcar los pedidos de esa mesa como entregados y archivados (mesa cobrada),
+    // sellando el momento del cobro (closedAt) para la "Caja del Día". Los pedidos
+    // cancelados no se tocan: nunca se cobraron, no pueden "resucitar" a entregado
+    // ni contar como venta (antes este forEach los pisaba, inflando la caja).
+    const closedAt = new Date().toISOString();
+    const closedOrders = [];
+    orders.forEach(o => {
+      if (o.tableId === tableId && o.status !== 'cancelado') {
+        o.status = 'entregado';
+        o.archived = true;
+        o.closedAt = closedAt;
+        closedOrders.push(o);
+      }
+    });
 
-      runInTransaction(() => {
-        closedOrders.forEach(persistOrder);
-        persistTable(tables[tableIndex]);
-        deleteAssistance(tableId);
-      });
+    // Resetear mesa a valores iniciales. El token se conserva: el QR impreso en la
+    // mesa tiene que seguir sirviendo para los próximos clientes. Si el Mostrador
+    // pidió bloquearla mientras tenía clientes (o se cerró el día), se bloquea ahora.
+    const previous = tables[tableIndex];
+    tables[tableIndex] = {
+      id: tableId,
+      status: 'libre',
+      currentOrderId: null,
+      paymentMethod: null,
+      total: 0,
+      qrToken: previous.qrToken,
+      enabled: previous.enabled && !previous.blockOnClose,
+      blockOnClose: false
+    };
+    activeAssistanceRequests.delete(tableId);
 
-      // Notificar a mostrador, cocina y a la mesa correspondiente
-      broadcastTables();
-      broadcastOrders();
-      // El server es la única fuente de la caja: todos los mostradores conectados
-      // reciben el total real (dos pestañas abiertas no divergen por sumas locales).
-      io.to('counter').emit('daily-sales-updated', getDailySalesTotal());
-      // La visita terminó: se desconecta de la mesa a todos sus celulares. Si no, el que
-      // deja la página abierta seguiría viendo en vivo los pedidos del grupo siguiente.
-      // Para volver a pedir hay que escanear el QR de nuevo.
-      io.to(`table-${tableId}`).emit('table-closed');
-      kickTableClients(tableId);
-    }
+    runInTransaction(() => {
+      closedOrders.forEach(persistOrder);
+      persistTable(tables[tableIndex]);
+      deleteAssistance(tableId);
+    });
+
+    // Notificar a mostrador, cocina y a la mesa correspondiente
+    broadcastTables();
+    broadcastOrders();
+    // El server es la única fuente de la caja: todos los mostradores conectados
+    // reciben el total real (dos pestañas abiertas no divergen por sumas locales).
+    io.to('counter').emit('daily-sales-updated', getDailySalesTotal());
+    // La visita terminó: se desconecta de la mesa a todos sus celulares. Si no, el que
+    // deja la página abierta seguiría viendo en vivo los pedidos del grupo siguiente.
+    // Para volver a pedir hay que escanear el QR de nuevo.
+    io.to(`table-${tableId}`).emit('table-closed');
+    kickTableClients(tableId);
   });
 
   // --- CRUD DEL MENÚ (desde Mostrador) ---
-  // Por sockets y no por HTTP a propósito: la guarda roles.has('counter') es la misma
+  // Por sockets y no por HTTP a propósito: la guarda de rol counter (staffOn) es la misma
   // que protege close-table/add-table (requireStaffAuth no alcanza: aceptaría también
   // el token de cocina, que no tiene por qué poder tocar precios). Tras cada mutación
   // se persiste en SQLite y se emite menu-updated a TODOS los conectados (los clientes
   // en las mesas actualizan catálogo y carrito en vivo, sin recargar).
 
   // Evento: Agregar un producto al menú
-  socket.on('menu-add', (data = {}) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'menu-add', (data = {}) => {
     const fields = sanitizeMenuFields(data);
     if (!fields) return;
 
@@ -916,8 +883,7 @@ io.on('connection', (socket) => {
 
   // Evento: Editar un producto (datos y/o disponibilidad). El switch rápido de
   // "agotado" del mostrador usa este mismo evento con available invertido.
-  socket.on('menu-update', (data = {}) => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'menu-update', (data = {}) => {
     const item = menuCache.find(m => m.id === data.id);
     if (!item) return;
     const fields = sanitizeMenuFields(data);
@@ -933,9 +899,8 @@ io.on('connection', (socket) => {
 
   // Evento: Eliminar un producto del menú. No rompe nada retroactivamente: los
   // pedidos (activos y archivados) guardan snapshot de nombre/precio, y edit-order
-  // conserva los items ya pedidos aunque el producto ya no exista (sanitizeEditItems).
-  socket.on('menu-delete', ({ id } = {}) => {
-    if (!socket.data.roles?.has('counter')) return;
+  // conserva los items ya pedidos aunque el producto ya no exista (sanitizeItems).
+  staffOn('counter', 'menu-delete', ({ id } = {}) => {
     if (!menuCache.some(m => m.id === id)) return;
 
     menuCache = menuCache.filter(m => m.id !== id);
@@ -947,8 +912,7 @@ io.on('connection', (socket) => {
   // lo cobrado desde el cierre anterior y la caja arranca de nuevo en $0. No exige
   // mesas libres: lo que se cobre después del cierre cuenta para la caja siguiente,
   // así una mesa que se queda hasta tarde no bloquea el arqueo del turno.
-  socket.on('close-register', () => {
-    if (!socket.data.roles?.has('counter')) return;
+  staffOn('counter', 'close-register', () => {
     const closure = closeRegister();
     io.to('counter').emit('register-closed', closure);
     io.to('counter').emit('daily-sales-updated', getDailySalesTotal());

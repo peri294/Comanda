@@ -80,27 +80,19 @@ db.exec(`
   );
 `);
 
-// Migración para bases creadas antes de que existiera closed_at (CREATE TABLE IF NOT
-// EXISTS no agrega columnas a una tabla ya existente, y el sentido de la persistencia
-// es justamente que las bases viejas sigan funcionando tras actualizar el código).
-const orderColumns = db.prepare('PRAGMA table_info(orders)').all().map(col => col.name);
-if (!orderColumns.includes('closed_at')) {
-  db.exec('ALTER TABLE orders ADD COLUMN closed_at TEXT');
-}
-
-// Mismo caso para qr_token: las mesas de una base vieja quedan sin token, y server.js
-// les genera uno al arrancar.
-const tableColumns = db.prepare('PRAGMA table_info(tables)').all().map(col => col.name);
-if (!tableColumns.includes('qr_token')) {
-  db.exec('ALTER TABLE tables ADD COLUMN qr_token TEXT');
-}
-// Las mesas de una base vieja arrancan bloqueadas: se habilitan con "Iniciar día".
-if (!tableColumns.includes('enabled')) {
-  db.exec('ALTER TABLE tables ADD COLUMN enabled INTEGER NOT NULL DEFAULT 0');
-}
-if (!tableColumns.includes('block_on_close')) {
-  db.exec('ALTER TABLE tables ADD COLUMN block_on_close INTEGER NOT NULL DEFAULT 0');
-}
+// Migraciones para bases creadas antes de que existieran estas columnas (CREATE TABLE
+// IF NOT EXISTS no agrega columnas a una tabla ya existente, y el sentido de la
+// persistencia es justamente que las bases viejas sigan funcionando tras actualizar).
+const addColumnIfMissing = (table, column, definition) => {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map(col => col.name);
+  if (!columns.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+};
+addColumnIfMissing('orders', 'closed_at', 'TEXT');
+// Las mesas de una base vieja quedan sin token (server.js les genera uno al arrancar)
+// y arrancan bloqueadas: se habilitan con "Iniciar día".
+addColumnIfMissing('tables', 'qr_token', 'TEXT');
+addColumnIfMissing('tables', 'enabled', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('tables', 'block_on_close', 'INTEGER NOT NULL DEFAULT 0');
 
 // --- PREPARED STATEMENTS ---
 

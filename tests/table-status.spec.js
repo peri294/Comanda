@@ -1,52 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { clientUrl, joinTable } from './helpers.js';
-import { io } from 'socket.io-client';
-
-const BACKEND = 'http://localhost:3001';
-
-const login = async (role, password) => {
-  const res = await fetch(`${BACKEND}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role, password })
-  });
-  return (await res.json()).token;
-};
-
-const connect = async () => {
-  const socket = io(BACKEND, { transports: ['websocket'] });
-  await new Promise(resolve => socket.on('connect', resolve));
-  return socket;
-};
-
-const connectStaff = async (role, password) => {
-  const token = await login(role, password);
-  const socket = await connect();
-  socket.emit('join', { role, token });
-  return { socket, token };
-};
-
-const fetchState = async (token) =>
-  (await fetch(`${BACKEND}/api/initial-state`, { headers: { Authorization: `Bearer ${token}` } })).json();
+import { clientUrl, joinTable, login, connect, connectStaff, fetchState, placeOrder, settle } from './helpers.js';
 
 const tableOf = async (token, tableId) => (await fetchState(token)).tables.find(t => t.id === tableId);
-
-// Manda un pedido desde un socket de mesa y devuelve el pedido creado por el server
-const placeOrder = async (client, tableId, productId) => {
-  const created = new Promise(resolve => {
-    const onChange = (order) => {
-      if (order.status === 'pendiente' && order.items.some(i => i.productId === productId)) {
-        client.off('order-status-changed', onChange);
-        resolve(order);
-      }
-    };
-    client.on('order-status-changed', onChange);
-  });
-  client.emit('new-order', { tableId, items: [{ productId, quantity: 1 }] });
-  return created;
-};
-
-const settle = () => new Promise(resolve => setTimeout(resolve, 300));
 
 test('la mesa pasa a "comiendo" recién cuando todos sus pedidos están entregados', async () => {
   const kitchen = await connectStaff('kitchen', 'cocina123');
@@ -55,13 +10,13 @@ test('la mesa pasa a "comiendo" recién cuando todos sus pedidos están entregad
   const client = await connect();
   await joinTable(client, '10');
 
-  const order1 = await placeOrder(client, '10', 'm1');
+  const order1 = await placeOrder(client, 'm1');
   kitchen.socket.emit('update-order-status', { orderId: order1.id, status: 'en_preparacion' });
   kitchen.socket.emit('update-order-status', { orderId: order1.id, status: 'listo' });
   await settle();
 
   // Mientras el mozo lleva el pedido 1, la mesa pide el pedido 2
-  const order2 = await placeOrder(client, '10', 'm8');
+  const order2 = await placeOrder(client, 'm8');
   kitchen.socket.emit('update-order-status', { orderId: order1.id, status: 'entregado' });
   await settle();
   expect((await tableOf(counterToken, '10')).status).toBe('pedido_pendiente');
@@ -84,7 +39,7 @@ test('la cuenta se pide con todo entregado; pedir algo más la cancela y sigue s
   const client = await connect();
   await joinTable(client, '11');
 
-  const order1 = await placeOrder(client, '11', 'm1'); // Espresso $1800
+  const order1 = await placeOrder(client, 'm1'); // Espresso $1800
   kitchen.socket.emit('update-order-status', { orderId: order1.id, status: 'listo' });
   await settle();
 
@@ -103,7 +58,7 @@ test('la cuenta se pide con todo entregado; pedir algo más la cancela y sigue s
   expect(table.paymentMethod).toBe('efectivo');
 
   // Se acordaron de algo más: la cuenta se cancela y el consumo sigue sumando
-  await placeOrder(client, '11', 'm8'); // Medialuna $800
+  await placeOrder(client, 'm8'); // Medialuna $800
   await settle();
   table = await tableOf(counter.token, '11');
   expect(table.status).toBe('pedido_pendiente');

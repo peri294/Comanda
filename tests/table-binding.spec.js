@@ -1,33 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { io } from 'socket.io-client';
-import { tableToken, joinTable } from './helpers.js';
-
-const BACKEND = 'http://localhost:3001';
-
-const login = async (role, password) => {
-  const res = await fetch(`${BACKEND}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role, password })
-  });
-  return (await res.json()).token;
-};
-
-const connect = async () => {
-  const socket = io(BACKEND, { transports: ['websocket'] });
-  await new Promise(resolve => socket.on('connect', resolve));
-  return socket;
-};
-
-const connectCounter = async () => {
-  const token = await login('counter', 'mostrador123');
-  const socket = await connect();
-  socket.emit('join', { role: 'counter', token });
-  return { socket, token };
-};
-
-const fetchState = async (token) =>
-  (await fetch(`${BACKEND}/api/initial-state`, { headers: { Authorization: `Bearer ${token}` } })).json();
+import { tableToken, joinTable, login, connect, connectStaff, fetchState, placeOrder, settle } from './helpers.js';
 
 // Respuesta del server al join de una mesa: el estado de la mesa, o null si no entró
 const joinWith = async (socket, tableId, token) => {
@@ -35,8 +7,6 @@ const joinWith = async (socket, tableId, token) => {
   socket.emit('join', { role: `table-${tableId}`, token });
   return state;
 };
-
-const settle = () => new Promise(resolve => setTimeout(resolve, 300));
 
 // Las 12 mesas semilla y la 13 (tables.spec) ya tienen dueño entre los specs que corren
 // en paralelo: estos tests crean las suyas con número puntual (30 en adelante: con 2x,
@@ -49,7 +19,7 @@ const addTable = async (counter, id) => {
 };
 
 test('sin el token del QR no se entra a la mesa, y una mesa no puede actuar sobre otra', async () => {
-  const counter = await connectCounter();
+  const counter = await connectStaff('counter', 'mostrador123');
   await addTable(counter, '30');
   await addTable(counter, '31');
   const tableOf = async (id) => (await fetchState(counter.token)).tables.find(t => t.id === id);
@@ -100,7 +70,7 @@ test('sin el token del QR no se entra a la mesa, y una mesa no puede actuar sobr
 });
 
 test('regenerar el QR corta al token viejo; cerrar la mesa lo conserva', async () => {
-  const counter = await connectCounter();
+  const counter = await connectStaff('counter', 'mostrador123');
   await addTable(counter, '32');
   const oldToken = await tableToken('32');
 
@@ -147,7 +117,7 @@ test('regenerar el QR corta al token viejo; cerrar la mesa lo conserva', async (
 });
 
 test('una mesa bloqueada siempre está vacía: con clientes, se bloquea recién al cerrarla', async () => {
-  const counter = await connectCounter();
+  const counter = await connectStaff('counter', 'mostrador123');
   await addTable(counter, '33');
   const tableOf = async () => (await fetchState(counter.token)).tables.find(t => t.id === '33');
   const assistanceCalls = [];
@@ -155,20 +125,7 @@ test('una mesa bloqueada siempre está vacía: con clientes, se bloquea recién 
 
   const client = await connect();
   await joinTable(client, '33');
-  const placeOrder = async (productId) => {
-    const created = new Promise(resolve => {
-      const onChange = (order) => {
-        if (order.status === 'pendiente' && order.items.some(i => i.productId === productId)) {
-          client.off('order-status-changed', onChange);
-          resolve(order);
-        }
-      };
-      client.on('order-status-changed', onChange);
-    });
-    client.emit('new-order', { items: [{ productId, quantity: 1 }] });
-    return created;
-  };
-  const order1 = await placeOrder('m1');
+  const order1 = await placeOrder(client, 'm1');
 
   // Bloquear con clientes sentados: queda habilitada y marcada, y puede seguir pidiendo
   counter.socket.emit('set-table-enabled', { tableId: '33', enabled: false });
@@ -176,7 +133,7 @@ test('una mesa bloqueada siempre está vacía: con clientes, se bloquea recién 
   let table = await tableOf();
   expect(table.enabled).toBe(true);
   expect(table.blockOnClose).toBe(true);
-  const order2 = await placeOrder('m8');
+  const order2 = await placeOrder(client, 'm8');
 
   // Cancelar todo deja la mesa vacía: el bloqueo pendiente se aplica en ese momento.
   // (Se cancela en vez de cobrar para no sumar a la Caja del Día, que tables.spec
@@ -201,7 +158,7 @@ test('una mesa bloqueada siempre está vacía: con clientes, se bloquea recién 
   const enabled = new Promise(resolve => client.on('table-state', state => { if (state?.enabled) resolve(state); }));
   counter.socket.emit('set-table-enabled', { tableId: '33', enabled: true });
   await enabled;
-  await placeOrder('m1');
+  await placeOrder(client, 'm1');
 
   // (El bloqueo al cobrar con close-table lo cubre day-cycle.spec, que corre después de
   // tables.spec y puede sumar a la caja.)

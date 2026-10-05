@@ -1,9 +1,39 @@
 import { useState, useEffect } from 'react';
 import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
-import { tableClientUrl } from '../config';
+import { BACKEND_URL, tableClientUrl } from '../config';
 import { createAudioContext, playTone } from '../utils/sound';
-import { BACKEND_URL } from '../config';
+import { MENU_CATEGORIES } from '../menuCategories';
+
+const headerButtonStyle = { padding: '10px 16px', fontSize: '0.8rem' };
+const smallButtonStyle = { padding: '4px 8px', fontSize: '0.75rem' };
+const inputStyle = {
+  padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
+  border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
+};
+const notificationColor = (type) =>
+  type === 'bill_requested' ? 'var(--danger)' : type === 'register_closed' ? 'var(--success)' : 'var(--warning)';
+
+// Sonidos de las alertas del mostrador (sintetizados, sin archivos de audio)
+const playNotificationSound = (type = 'success') => {
+  try {
+    const ctx = createAudioContext();
+    if (type === 'alert') {
+      playTone(ctx, { freq: 880, duration: 0.15 });
+      playTone(ctx, { freq: 1046.5, at: 0.2, duration: 0.15 });
+    } else if (type === 'assistance') {
+      // Distinto del de "cuenta solicitada": tres golpes iguales, no dos tonos ascendentes
+      playTone(ctx, { freq: 740, type: 'triangle', gain: 0.18, duration: 0.12 });
+      playTone(ctx, { freq: 740, type: 'triangle', gain: 0.18, at: 0.18, duration: 0.12 });
+      playTone(ctx, { freq: 740, type: 'triangle', gain: 0.18, at: 0.36, duration: 0.18 });
+    } else {
+      const gainNode = playTone(ctx, { freq: 587.33, duration: 0.5 });
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+    }
+  } catch (e) {
+    console.log("Audio API not allowed/error:", e);
+  }
+};
 
 export default function CounterView({ socket, token, onLogout }) {
   const [tables, setTables] = useState([]);
@@ -12,7 +42,6 @@ export default function CounterView({ socket, token, onLogout }) {
   // Solo el id: la mesa y sus pedidos se derivan en vivo de `tables`/`activeOrders`
   // en cada render, así el modal no queda con datos viejos mientras está abierto.
   const [selectedTableId, setSelectedTableId] = useState(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [dailySales, setDailySales] = useState(0);
   const [menu, setMenu] = useState([]);
 
@@ -78,10 +107,14 @@ export default function CounterView({ socket, token, onLogout }) {
   useEffect(() => {
     if (!socket) return;
 
-    // Tables state update
-    socket.on('tables-updated', (updatedTables) => {
-      setTables(updatedTables);
-    });
+    // Agrega una alerta al panel (se guardan las últimas 10) y suena
+    const notify = (type, title, message, sound) => {
+      const notif = { id: Date.now(), type, title, message, time: new Date().toLocaleTimeString() };
+      setNotifications(prev => [notif, ...prev].slice(0, 10));
+      playNotificationSound(sound);
+    };
+
+    socket.on('tables-updated', setTables);
 
     // New order notification
     socket.on('order-received-counter', (newOrder) => {
@@ -90,61 +123,29 @@ export default function CounterView({ socket, token, onLogout }) {
         return [...prev, newOrder];
       });
       
-      addNotification({
-        id: Date.now(),
-        type: 'new_order',
-        title: 'Nuevo pedido recibido',
-        message: `Mesa ${newOrder.tableId} envió un pedido.`,
-        time: new Date().toLocaleTimeString()
-      });
-      playNotificationSound('success');
+      notify('new_order', 'Nuevo pedido recibido', `Mesa ${newOrder.tableId} envió un pedido.`, 'success');
     });
 
     // Bill requested notification
     socket.on('bill-requested', ({ tableId, paymentMethod, total }) => {
-      addNotification({
-        id: Date.now(),
-        type: 'bill_requested',
-        title: 'Solicitud de cuenta',
-        message: `Mesa ${tableId} solicita cerrar cuenta en ${paymentMethod === 'efectivo' ? 'Efectivo' : 'Tarjeta'}. Total: $${total}`,
-        time: new Date().toLocaleTimeString()
-      });
-      playNotificationSound('alert');
+      notify('bill_requested', 'Solicitud de cuenta', `Mesa ${tableId} solicita cerrar cuenta en ${paymentMethod === 'efectivo' ? 'Efectivo' : 'Tarjeta'}. Total: $${total}`, 'alert');
     });
 
     // La mesa pidió algo más después de pedir la cuenta: la solicitud queda cancelada
     socket.on('bill-cancelled', ({ tableId }) => {
-      addNotification({
-        id: Date.now(),
-        type: 'bill_cancelled',
-        title: 'Cuenta cancelada',
-        message: `Mesa ${tableId} pidió algo más: se canceló la solicitud de cuenta y el consumo sigue sumando.`,
-        time: new Date().toLocaleTimeString()
-      });
-      playNotificationSound('alert');
+      notify('bill_cancelled', 'Cuenta cancelada', `Mesa ${tableId} pidió algo más: se canceló la solicitud de cuenta y el consumo sigue sumando.`, 'alert');
     });
 
     // Full order list sync (item merges, status changes, table closed)
-    socket.on('orders-updated', (updatedOrders) => {
-      setActiveOrders(updatedOrders);
-    });
+    socket.on('orders-updated', setActiveOrders);
 
     // El server recalcula la caja tras cada cobro y la manda a todos los mostradores
     // conectados: única fuente de verdad, sin sumas locales que puedan divergir.
-    socket.on('daily-sales-updated', (total) => {
-      setDailySales(total);
-    });
+    socket.on('daily-sales-updated', setDailySales);
 
     // Alguien cerró la caja (puede haber sido otra pestaña/tablet de mostrador)
     socket.on('register-closed', ({ total, ordersCount }) => {
-      addNotification({
-        id: Date.now(),
-        type: 'register_closed',
-        title: 'Caja cerrada',
-        message: `Cierre por $${total} (${ordersCount} ${ordersCount === 1 ? 'pedido cobrado' : 'pedidos cobrados'}).`,
-        time: new Date().toLocaleTimeString()
-      });
-      playNotificationSound('success');
+      notify('register_closed', 'Caja cerrada', `Cierre por $${total} (${ordersCount} ${ordersCount === 1 ? 'pedido cobrado' : 'pedidos cobrados'}).`, 'success');
     });
 
     // Una mesa llamó al mozo
@@ -153,22 +154,12 @@ export default function CounterView({ socket, token, onLogout }) {
         if (prev.find(a => a.tableId === tableId)) return prev;
         return [...prev, { tableId, timestamp }];
       });
-
-      addNotification({
-        id: Date.now(),
-        type: 'assistance',
-        title: 'Llamado de mesa',
-        message: `Mesa ${tableId} pidió asistencia.`,
-        time: new Date().toLocaleTimeString()
-      });
-      playNotificationSound('assistance');
+      notify('assistance', 'Llamado de mesa', `Mesa ${tableId} pidió asistencia.`, 'assistance');
     });
 
     // El menú cambió (posiblemente desde otra pestaña/tablet de mostrador):
     // se refresca la copia local usada por el panel de menú y la edición de pedidos.
-    socket.on('menu-updated', (newMenu) => {
-      setMenu(newMenu);
-    });
+    socket.on('menu-updated', setMenu);
 
     return () => {
       socket.off('tables-updated');
@@ -188,32 +179,6 @@ export default function CounterView({ socket, token, onLogout }) {
     setAssistanceRequests(prev => prev.filter(a => a.tableId !== tableId));
   };
 
-  // Push notification helper
-  const addNotification = (notif) => {
-    setNotifications(prev => [notif, ...prev].slice(0, 10)); // Keep last 10
-  };
-
-  // Sound Synth Synthesizer
-  const playNotificationSound = (type = 'success') => {
-    try {
-      const ctx = createAudioContext();
-      if (type === 'alert') {
-        playTone(ctx, { freq: 880, duration: 0.15 });
-        playTone(ctx, { freq: 1046.5, at: 0.2, duration: 0.15 });
-      } else if (type === 'assistance') {
-        // Distinto del de "cuenta solicitada": tres golpes iguales, no dos tonos ascendentes
-        playTone(ctx, { freq: 740, type: 'triangle', gain: 0.18, duration: 0.12 });
-        playTone(ctx, { freq: 740, type: 'triangle', gain: 0.18, at: 0.18, duration: 0.12 });
-        playTone(ctx, { freq: 740, type: 'triangle', gain: 0.18, at: 0.36, duration: 0.18 });
-      } else {
-        const gainNode = playTone(ctx, { freq: 587.33, duration: 0.5 });
-        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-      }
-    } catch (e) {
-      console.log("Audio API not allowed/error:", e);
-    }
-  };
-
   // Close table and process payment (la caja del día la actualiza el server
   // vía daily-sales-updated, acá no se suma nada localmente)
   const handleCloseTable = (tableId) => {
@@ -228,11 +193,9 @@ export default function CounterView({ socket, token, onLogout }) {
   // View order details
   const handleViewDetails = (table) => {
     setSelectedTableId(table.id);
-    setIsModalOpen(true);
   };
 
   const closeModal = () => {
-    setIsModalOpen(false);
     setSelectedTableId(null);
     cancelEditingOrder();
   };
@@ -290,10 +253,6 @@ export default function CounterView({ socket, token, onLogout }) {
   // --- Alta/baja de mesas (el backend asigna el número más chico sin usar,
   // y solo permite quitar mesas libres) ---
 
-  const handleAddTable = () => {
-    socket.emit('add-table', {});
-  };
-
   const handleRemoveTable = (tableId) => {
     if (!window.confirm(`¿Dar de baja la Mesa ${tableId}? Su QR deja de funcionar: si se vuelve a agregar, va a necesitar un QR nuevo.`)) return;
     socket.emit('remove-table', { tableId });
@@ -302,14 +261,6 @@ export default function CounterView({ socket, token, onLogout }) {
   // --- Habilitación de mesas ---
   // Bloquear una mesa con clientes no la corta: el server la marca y la bloquea al
   // cobrarla, para que una mesa bloqueada nunca tenga una cuenta abierta.
-
-  const handleToggleTableEnabled = (table) => {
-    socket.emit('set-table-enabled', { tableId: table.id, enabled: !table.enabled || table.blockOnClose });
-  };
-
-  const handleStartDay = () => {
-    socket.emit('start-day');
-  };
 
   // Cerrar el día y cerrar la caja son independientes: se ofrece hacer los dos juntos,
   // pero se puede cerrar el día sin tocar la caja.
@@ -413,21 +364,19 @@ export default function CounterView({ socket, token, onLogout }) {
         </div>
 
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-          <div className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center', minWidth: '110px' }}>
-            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Mesas Activas</span>
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-gold)' }}>{tablesOccupied} / {tables.length}</div>
-          </div>
-          <div className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center', minWidth: '110px' }}>
-            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Cuentas Pendientes</span>
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--danger)' }}>{tablesWaitingBill}</div>
-          </div>
-          <div className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center', minWidth: '110px' }}>
-            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Caja del Día</span>
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>${dailySales}</div>
-          </div>
+          {[
+            ['Mesas Activas', `${tablesOccupied} / ${tables.length}`, 'var(--accent-gold)'],
+            ['Cuentas Pendientes', tablesWaitingBill, 'var(--danger)'],
+            ['Caja del Día', `$${dailySales}`, 'var(--success)']
+          ].map(([label, value, color]) => (
+            <div key={label} className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center', minWidth: '110px' }}>
+              <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>{label}</span>
+              <div style={{ fontSize: '1.5rem', fontWeight: 800, color }}>{value}</div>
+            </div>
+          ))}
           <button
             className="btn-secondary"
-            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            style={headerButtonStyle}
             onClick={handleCloseRegister}
             title="Registrar un cierre de caja con lo cobrado hasta ahora"
           >
@@ -435,15 +384,15 @@ export default function CounterView({ socket, token, onLogout }) {
           </button>
           <button
             className="btn-secondary"
-            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
-            onClick={handleStartDay}
+            style={headerButtonStyle}
+            onClick={() => socket.emit('start-day')}
             title="Habilitar todas las mesas para recibir pedidos"
           >
             <Sun size={16} /> Iniciar Día
           </button>
           <button
             className="btn-secondary"
-            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            style={headerButtonStyle}
             onClick={handleEndDay}
             title="Bloquear todas las mesas (las ocupadas, al cobrarlas)"
           >
@@ -451,15 +400,15 @@ export default function CounterView({ socket, token, onLogout }) {
           </button>
           <button
             className="btn-secondary"
-            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
-            onClick={handleAddTable}
+            style={headerButtonStyle}
+            onClick={() => socket.emit('add-table', {})}
             title="Agregar una mesa nueva (toma el número más chico disponible)"
           >
             <Plus size={16} /> Agregar Mesa
           </button>
           <button
             className="btn-secondary"
-            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            style={headerButtonStyle}
             onClick={() => setIsMenuAdminOpen(true)}
             title="Administrar los productos del menú (precios, stock, altas y bajas)"
           >
@@ -467,7 +416,7 @@ export default function CounterView({ socket, token, onLogout }) {
           </button>
           <button
             className="btn-secondary"
-            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            style={headerButtonStyle}
             onClick={onLogout}
             title="Cerrar sesión de mostrador"
           >
@@ -483,6 +432,11 @@ export default function CounterView({ socket, token, onLogout }) {
           <div className="counter-grid">
             {tables.map(table => {
               const order = activeOrders.find(o => o.id === table.currentOrderId);
+              // Bloqueada o con bloqueo pendiente: el candado la (re)habilita
+              const willEnable = !table.enabled || table.blockOnClose;
+              const lockLabel = willEnable
+                ? `Habilitar Mesa ${table.id}`
+                : table.status === 'libre' ? `Bloquear Mesa ${table.id}` : `Bloquear Mesa ${table.id} al cobrar`;
               return (
                 <div 
                   key={table.id} 
@@ -506,30 +460,21 @@ export default function CounterView({ socket, token, onLogout }) {
                       )}
                     </div>
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      {(() => {
-                        // Bloqueada o con bloqueo pendiente: el botón la (re)habilita
-                        const willEnable = !table.enabled || table.blockOnClose;
-                        const label = willEnable
-                          ? `Habilitar Mesa ${table.id}`
-                          : table.status === 'libre' ? `Bloquear Mesa ${table.id}` : `Bloquear Mesa ${table.id} al cobrar`;
-                        return (
-                          <button
-                            className="btn-secondary"
-                            style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                            onClick={() => handleToggleTableEnabled(table)}
-                            title={label}
-                            aria-label={label}
-                          >
-                            {willEnable ? <LockOpen size={12} /> : <Lock size={12} />}
-                          </button>
-                        );
-                      })()}
+                      <button
+                        className="btn-secondary"
+                        style={smallButtonStyle}
+                        onClick={() => socket.emit('set-table-enabled', { tableId: table.id, enabled: willEnable })}
+                        title={lockLabel}
+                        aria-label={lockLabel}
+                      >
+                        {willEnable ? <LockOpen size={12} /> : <Lock size={12} />}
+                      </button>
                       <a
                         href={tableClientUrl(table.id, table.qrToken)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="btn-secondary"
-                        style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                        style={smallButtonStyle}
                         title={`Abrir el link del QR de la Mesa ${table.id}`}
                         aria-label={`QR de la Mesa ${table.id}`}
                       >
@@ -537,7 +482,7 @@ export default function CounterView({ socket, token, onLogout }) {
                       </a>
                       <button
                         className="btn-secondary"
-                        style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                        style={smallButtonStyle}
                         onClick={() => handleRegenerateQr(table.id)}
                         title={`Regenerar el QR de la Mesa ${table.id} (el anterior deja de funcionar)`}
                         aria-label={`Regenerar QR de la Mesa ${table.id}`}
@@ -661,11 +606,11 @@ export default function CounterView({ socket, token, onLogout }) {
                   <div key={notif.id} className="glass-panel" style={{ 
                     padding: '12px', 
                     fontSize: '0.85rem', 
-                    borderLeft: `3px solid ${notif.type === 'bill_requested' ? 'var(--danger)' : notif.type === 'register_closed' ? 'var(--success)' : 'var(--warning)'}`,
+                    borderLeft: `3px solid ${notificationColor(notif.type)}`,
                     background: 'rgba(255, 255, 255, 0.02)'
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginBottom: '2px' }}>
-                      <span style={{ color: notif.type === 'bill_requested' ? 'var(--danger)' : notif.type === 'register_closed' ? 'var(--success)' : 'var(--warning)' }}>{notif.title}</span>
+                      <span style={{ color: notificationColor(notif.type) }}>{notif.title}</span>
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{notif.time}</span>
                     </div>
                     <p style={{ color: 'var(--text-secondary)' }}>{notif.message}</p>
@@ -708,10 +653,7 @@ export default function CounterView({ socket, token, onLogout }) {
                   placeholder="Nombre del producto"
                   value={menuForm.name}
                   onChange={(e) => setMenuForm(f => ({ ...f, name: e.target.value }))}
-                  style={{
-                    flex: 2, padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
-                    border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
-                  }}
+                  style={{ ...inputStyle, flex: 2 }}
                 />
                 <input
                   placeholder="Precio"
@@ -719,10 +661,7 @@ export default function CounterView({ socket, token, onLogout }) {
                   min="1"
                   value={menuForm.price}
                   onChange={(e) => setMenuForm(f => ({ ...f, price: e.target.value }))}
-                  style={{
-                    flex: 1, padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
-                    border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
-                  }}
+                  style={{ ...inputStyle, flex: 1 }}
                 />
               </div>
               <div style={{ display: 'flex', gap: '10px' }}>
@@ -730,23 +669,16 @@ export default function CounterView({ socket, token, onLogout }) {
                   placeholder="Descripción (opcional)"
                   value={menuForm.description}
                   onChange={(e) => setMenuForm(f => ({ ...f, description: e.target.value }))}
-                  style={{
-                    flex: 2, padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
-                    border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
-                  }}
+                  style={{ ...inputStyle, flex: 2 }}
                 />
                 <select
                   value={menuForm.category}
                   onChange={(e) => setMenuForm(f => ({ ...f, category: e.target.value }))}
-                  style={{
-                    flex: 1, padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
-                    border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
-                  }}
+                  style={{ ...inputStyle, flex: 1 }}
                 >
-                  <option value="bebidas_calientes">Café Caliente</option>
-                  <option value="bebidas_frias">Fríos y Licuados</option>
-                  <option value="pasteleria">Pastelería</option>
-                  <option value="salado">Salado</option>
+                  {MENU_CATEGORIES.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.label}</option>
+                  ))}
                 </select>
               </div>
               <div style={{ display: 'flex', gap: '10px' }}>
@@ -818,7 +750,7 @@ export default function CounterView({ socket, token, onLogout }) {
       )}
 
       {/* Table Detail Modal */}
-      {isModalOpen && selectedTable && (
+      {selectedTable && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="glass-panel modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">

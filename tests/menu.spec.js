@@ -1,23 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { clientUrl, joinTable } from './helpers.js';
-import { io } from 'socket.io-client';
-
-const BACKEND = 'http://localhost:3001';
-
-// Login de personal por HTTP + socket crudo unido a ese rol (simula una tablet real
-// de staff, o un atacante que consiguió esa contraseña pero no la del otro rol).
-async function connectStaffSocket(role, password) {
-  const res = await fetch(`${BACKEND}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role, password })
-  });
-  const { token } = await res.json();
-  const socket = io(BACKEND, { transports: ['websocket'] });
-  await new Promise(resolve => socket.on('connect', resolve));
-  socket.emit('join', { role, token });
-  return socket;
-}
+import { BACKEND, clientUrl, joinTable, connect, connectStaff } from './helpers.js';
 
 const fetchMenu = async () => (await fetch(`${BACKEND}/api/menu`)).json();
 
@@ -78,8 +60,7 @@ test('menú administrable: CRUD, stock en vivo y seguridad', async ({ browser })
   const cafe = menuNow.find(m => m.name === 'Café de Especialidad');
   expect(cafe.available).toBe(false);
 
-  const attacker = io(BACKEND, { transports: ['websocket'] });
-  await new Promise(resolve => attacker.on('connect', resolve));
+  const attacker = await connect();
   // Con el token de la mesa: así lo único que puede frenar el pedido es el stock.
   await joinTable(attacker, '5');
   attacker.emit('new-order', { items: [{ productId: cafe.id, quantity: 3, price: 1 }] });
@@ -90,7 +71,7 @@ test('menú administrable: CRUD, stock en vivo y seguridad', async ({ browser })
 
   // 5. BYPASS DE ROL: una sesión de COCINA (token válido, rol equivocado) intenta
   // borrar el producto. El server debe ignorarla: el CRUD del menú es solo de mostrador.
-  const kitchenSocket = await connectStaffSocket('kitchen', 'cocina123');
+  const { socket: kitchenSocket } = await connectStaff('kitchen', 'cocina123');
   kitchenSocket.emit('menu-delete', { id: cafe.id });
   await counterPage.waitForTimeout(1000);
   const menuAfterKitchen = await fetchMenu();
@@ -99,7 +80,7 @@ test('menú administrable: CRUD, stock en vivo y seguridad', async ({ browser })
 
   // 6. INPUTS INVÁLIDOS CON ROL VÁLIDO: ni un precio negativo ni una categoría
   // inventada pasan la validación del server, aunque vengan de un mostrador real.
-  const counterSocket = await connectStaffSocket('counter', 'mostrador123');
+  const { socket: counterSocket } = await connectStaff('counter', 'mostrador123');
   counterSocket.emit('menu-add', { name: 'Hackeado Precio', price: -50, category: 'bebidas_calientes' });
   counterSocket.emit('menu-add', { name: 'Hackeado Categoria', price: 1000, category: 'categoria_falsa' });
   await counterPage.waitForTimeout(1000);

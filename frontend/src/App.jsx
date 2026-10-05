@@ -93,7 +93,7 @@ export default function App() {
       const ctx = createAudioContext();
       const gainNode = playTone(ctx, { freq: 523.25, gain: 0.1, duration: 0.4 }); // C5
       gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-    } catch (e) {
+    } catch {
       alert("Por favor habilita el audio interactuando con la página primero.");
     }
   };
@@ -228,41 +228,33 @@ export default function App() {
             {/* Admin and Kitchen Panels Row */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '30px', flexWrap: 'wrap' }}>
               
-              {/* Counter Box */}
-              <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                  <Monitor style={{ color: 'var(--accent-gold)' }} /> Pantalla del Mostrador
-                </h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '20px', flex: 1 }}>
-                  Vista para el cajero/encargado. Monitorea las 12 mesas, muestra los pedidos y totales en consumo, recibe alertas de solicitudes de cierre de cuenta y procesa cobros.
-                </p>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button className="btn-primary" style={{ flex: 1 }} onClick={() => navigateTo('counter')}>
-                    Abrir Mostrador
-                  </button>
-                  <a href="?view=counter" target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ padding: '12px' }}>
-                    <ExternalLink size={16} />
-                  </a>
+              {[
+                {
+                  view: 'counter', Icon: Monitor, title: 'Pantalla del Mostrador', button: 'Abrir Mostrador',
+                  text: 'Vista para el cajero/encargado. Monitorea las 12 mesas, muestra los pedidos y totales en consumo, recibe alertas de solicitudes de cierre de cuenta y procesa cobros.'
+                },
+                {
+                  view: 'kitchen', Icon: ChefHat, title: 'Monitor de Cocina', button: 'Abrir Cocina',
+                  text: 'Vista para los chefs y cocineros. Lista los pedidos entrantes clasificados cronológicamente, muestra los detalles de los productos y sus notas, y permite avanzar su preparación.'
+                }
+              ].map(({ view: target, Icon, title, button, text }) => (
+                <div key={target} className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '100%' }}>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                    <Icon style={{ color: 'var(--accent-gold)' }} /> {title}
+                  </h3>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '20px', flex: 1 }}>
+                    {text}
+                  </p>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button className="btn-primary" style={{ flex: 1 }} onClick={() => navigateTo(target)}>
+                      {button}
+                    </button>
+                    <a href={`?view=${target}`} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ padding: '12px' }}>
+                      <ExternalLink size={16} />
+                    </a>
+                  </div>
                 </div>
-              </div>
-
-              {/* Kitchen Box */}
-              <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                  <ChefHat style={{ color: 'var(--accent-gold)' }} /> Monitor de Cocina
-                </h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '20px', flex: 1 }}>
-                  Vista para los chefs y cocineros. Lista los pedidos entrantes clasificados cronológicamente, muestra los detalles de los productos y sus notas, y permite avanzar su preparación.
-                </p>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button className="btn-primary" style={{ flex: 1 }} onClick={() => navigateTo('kitchen')}>
-                    Abrir Cocina
-                  </button>
-                  <a href="?view=kitchen" target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ padding: '12px' }}>
-                    <ExternalLink size={16} />
-                  </a>
-                </div>
-              </div>
+              ))}
 
             </div>
 

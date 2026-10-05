@@ -1,6 +1,4 @@
-import { io } from 'socket.io-client';
-
-const BACKEND = 'http://localhost:3001';
+import { BACKEND, login, connect } from './helpers.js';
 
 // Corre una sola vez antes de toda la suite (no por test) para no generar la misma
 // condición de carrera que se busca evitar: si el reset corriera en el beforeEach de
@@ -14,13 +12,8 @@ export default async function globalSetup() {
   }
 
   // Las mesas nacen bloqueadas: se inicia el día como lo haría el Mostrador.
-  const { token } = await (await fetch(`${BACKEND}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role: 'counter', password: 'mostrador123' })
-  })).json();
-  const socket = io(BACKEND, { transports: ['websocket'] });
-  await new Promise(resolve => socket.on('connect', resolve));
+  const token = await login('counter', 'mostrador123');
+  const socket = await connect();
   const started = new Promise(resolve => socket.once('tables-updated', resolve));
   socket.emit('join', { role: 'counter', token });
   socket.emit('start-day');

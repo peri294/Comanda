@@ -1,16 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { io } from 'socket.io-client';
-import { clientUrl, joinTable } from './helpers.js';
-
-const BACKEND = 'http://localhost:3001';
-
-const connect = async () => {
-  const socket = io(BACKEND, { transports: ['websocket'] });
-  await new Promise(resolve => socket.on('connect', resolve));
-  return socket;
-};
-
-const settle = () => new Promise(resolve => setTimeout(resolve, 300));
+import { clientUrl, joinTable, connect, connectStaff, settle } from './helpers.js';
 
 // Corre en su propio proyecto de Playwright, después de todos los demás specs (ver
 // playwright.config.js): cerrar el día bloquea todas las mesas.
@@ -29,13 +18,7 @@ test('cerrar el día bloquea las mesas libres al instante y las ocupadas al cobr
   // Mesas propias: la 34 va a quedar ocupada y la 35 libre, con un cliente mirándola
   const mesa34 = counterPage.locator('.table-card', { hasText: 'Mesa 34' });
   const mesa35 = counterPage.locator('.table-card', { hasText: 'Mesa 35' });
-  const { token } = await (await fetch(`${BACKEND}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role: 'counter', password: 'mostrador123' })
-  })).json();
-  const counterSocket = await connect();
-  counterSocket.emit('join', { role: 'counter', token });
+  const { socket: counterSocket } = await connectStaff('counter', 'mostrador123');
   counterSocket.emit('add-table', { id: '34' });
   counterSocket.emit('add-table', { id: '35' });
   await expect(mesa35).toBeVisible({ timeout: 10000 });

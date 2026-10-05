@@ -4,6 +4,28 @@ import { useSocketRoom } from '../hooks/useSocketRoom';
 import { createAudioContext, playTone } from '../utils/sound';
 import { BACKEND_URL } from '../config';
 
+// Audio chime specifically for kitchen
+const playKitchenSound = () => {
+  try {
+    const ctx = createAudioContext();
+    const gainNode = playTone(ctx, { freq: 659.25, type: 'triangle', gain: 0.2, duration: 0.6 }); // E5
+    gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+  } catch (e) {
+    console.log("Audio play error", e);
+  }
+};
+
+// Tono distinto (descendente) para cuando el mostrador corrige/cancela un pedido
+const playOrderModifiedSound = () => {
+  try {
+    const ctx = createAudioContext();
+    playTone(ctx, { freq: 700, type: 'square', gain: 0.15, duration: 0.15 });
+    playTone(ctx, { freq: 400, type: 'square', gain: 0.15, at: 0.18, duration: 0.25 });
+  } catch (e) {
+    console.log("Audio play error", e);
+  }
+};
+
 export default function KitchenView({ socket, token, onLogout }) {
   const [orders, setOrders] = useState([]);
   // Pedidos que el mostrador acaba de corregir, para resaltarlos un rato en la tarjeta
@@ -51,9 +73,7 @@ export default function KitchenView({ socket, token, onLogout }) {
     });
 
     // Orders state updated
-    socket.on('orders-updated', (updatedOrders) => {
-      setOrders(updatedOrders);
-    });
+    socket.on('orders-updated', setOrders);
 
     // El mostrador corrigió o canceló un pedido que cocina ya tenía en pantalla
     socket.on('order-modified', ({ order, reason }) => {
@@ -77,28 +97,6 @@ export default function KitchenView({ socket, token, onLogout }) {
     };
   }, [socket]);
 
-  // Audio chime specifically for kitchen
-  const playKitchenSound = () => {
-    try {
-      const ctx = createAudioContext();
-      const gainNode = playTone(ctx, { freq: 659.25, type: 'triangle', gain: 0.2, duration: 0.6 }); // E5
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-    } catch (e) {
-      console.log("Audio play error", e);
-    }
-  };
-
-  // Tono distinto (descendente) para cuando el mostrador corrige/cancela un pedido
-  const playOrderModifiedSound = () => {
-    try {
-      const ctx = createAudioContext();
-      playTone(ctx, { freq: 700, type: 'square', gain: 0.15, duration: 0.15 });
-      playTone(ctx, { freq: 400, type: 'square', gain: 0.15, at: 0.18, duration: 0.25 });
-    } catch (e) {
-      console.log("Audio play error", e);
-    }
-  };
-
   // Change status of order
   const updateStatus = (orderId, newStatus) => {
     socket.emit('update-order-status', { orderId, status: newStatus });
@@ -112,11 +110,6 @@ export default function KitchenView({ socket, token, onLogout }) {
     return `Hace ${mins} min`;
   };
 
-  // Counter states
-  const pendingOrders = orders.filter(o => o.status === 'pendiente');
-  const preparingOrders = orders.filter(o => o.status === 'en_preparacion');
-  const readyOrders = orders.filter(o => o.status === 'listo');
-
   return (
     <div className="animate-fade-in">
       {/* Header bar with stats */}
@@ -129,18 +122,16 @@ export default function KitchenView({ socket, token, onLogout }) {
         </div>
         
         <div style={{ display: 'flex', gap: '12px' }}>
-          <div className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center' }}>
-            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Pendientes</span>
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--warning)' }}>{pendingOrders.length}</div>
-          </div>
-          <div className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center' }}>
-            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>En Preparación</span>
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-gold)' }}>{preparingOrders.length}</div>
-          </div>
-          <div className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center' }}>
-            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Listos</span>
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>{readyOrders.length}</div>
-          </div>
+          {[
+            ['Pendientes', 'pendiente', 'var(--warning)'],
+            ['En Preparación', 'en_preparacion', 'var(--accent-gold)'],
+            ['Listos', 'listo', 'var(--success)']
+          ].map(([label, status, color]) => (
+            <div key={status} className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center' }}>
+              <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>{label}</span>
+              <div style={{ fontSize: '1.5rem', fontWeight: 800, color }}>{orders.filter(o => o.status === status).length}</div>
+            </div>
+          ))}
           <button
             className="btn-secondary"
             style={{ padding: '10px 16px', fontSize: '0.8rem' }}

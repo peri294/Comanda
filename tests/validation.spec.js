@@ -1,28 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { joinTable } from './helpers.js';
-import { io } from 'socket.io-client';
-
-const BACKEND = 'http://localhost:3001';
-
-const login = async (role, password) => {
-  const res = await fetch(`${BACKEND}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role, password })
-  });
-  return (await res.json()).token;
-};
-
-const connect = async () => {
-  const socket = io(BACKEND, { transports: ['websocket'] });
-  await new Promise(resolve => socket.on('connect', resolve));
-  return socket;
-};
-
-const fetchState = async (token) =>
-  (await fetch(`${BACKEND}/api/initial-state`, { headers: { Authorization: `Bearer ${token}` } })).json();
-
-const settle = () => new Promise(resolve => setTimeout(resolve, 300));
+import { joinTable, login, connect, fetchState, settle } from './helpers.js';
 
 test('cocina solo puede avanzar un pedido por estados válidos', async () => {
   const counterToken = await login('counter', 'mostrador123');

@@ -1,8 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { clientUrl, joinTable } from './helpers.js';
-import { io } from 'socket.io-client';
-
-const BACKEND = 'http://localhost:3001';
+import { clientUrl, joinTable, login, connect, fetchState } from './helpers.js';
 
 test('cada ronda del cliente es una comanda nueva en cocina, sin tocar la que ya está en preparación', async ({ browser }) => {
   const clientContext = await browser.newContext();
@@ -49,24 +46,6 @@ test('cada ronda del cliente es una comanda nueva en cocina, sin tocar la que ya
 });
 
 test('update-order ya no existe: un socket no puede meter items en un pedido ajeno', async () => {
-  const login = async () => {
-    const res = await fetch(`${BACKEND}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'counter', password: 'mostrador123' })
-    });
-    return (await res.json()).token;
-  };
-  const fetchOrder = async (token, orderId) => {
-    const res = await fetch(`${BACKEND}/api/initial-state`, { headers: { Authorization: `Bearer ${token}` } });
-    return (await res.json()).orders.find(o => o.id === orderId);
-  };
-  const connect = async () => {
-    const socket = io(BACKEND, { transports: ['websocket'] });
-    await new Promise(resolve => socket.on('connect', resolve));
-    return socket;
-  };
-
   // Mesa 8: libre de los otros specs que corren en paralelo
   const client = await connect();
   await joinTable(client, '8');
@@ -79,8 +58,8 @@ test('update-order ya no existe: un socket no puede meter items en un pedido aje
   attacker.emit('update-order', { orderId: order.id, items: [{ productId: 'm12', quantity: 5 }] });
   await new Promise(resolve => setTimeout(resolve, 500));
 
-  const token = await login();
-  const after = await fetchOrder(token, order.id);
+  const token = await login('counter', 'mostrador123');
+  const after = (await fetchState(token)).orders.find(o => o.id === order.id);
   expect(after.items).toEqual([expect.objectContaining({ productId: 'm1', quantity: 1 })]);
 
   client.close();
