@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { joinTable } from './helpers.js';
 import { io } from 'socket.io-client';
 
 const BACKEND = 'http://localhost:3001';
@@ -30,7 +31,7 @@ test('cocina solo puede avanzar un pedido por estados válidos', async () => {
 
   // Mesa 7: libre de los otros specs que corren en paralelo
   const client = await connect();
-  client.emit('join', { role: 'table-7' });
+  await joinTable(client, '7');
   const created = new Promise(resolve => client.once('order-status-changed', resolve));
   client.emit('new-order', { tableId: '7', items: [{ productId: 'm1', quantity: 1 }] });
   const order = await created;
@@ -78,7 +79,7 @@ test('la cuenta solo se pide con un método válido y la mesa con todo entregado
 
   // Mesa 9: libre de los otros specs que corren en paralelo
   const client = await connect();
-  client.emit('join', { role: 'table-9' });
+  await joinTable(client, '9');
 
   // Mesa libre en $0: no hay cuenta que pedir
   client.emit('request-bill', { tableId: '9', paymentMethod: 'efectivo' });

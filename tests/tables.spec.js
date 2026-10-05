@@ -20,8 +20,10 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   await counterPage.getByRole('button', { name: /agregar mesa/i }).click();
   await expect(mesa13).toBeVisible({ timeout: 10000 });
 
-  // 2. PEDIR DESDE LA MESA NUEVA (su QR funciona como el de cualquier otra)
-  await clientPage.goto('/?view=client&table=13');
+  // 2. PEDIR DESDE LA MESA NUEVA, con el link del QR que muestra el mostrador
+  const qrLink = await mesa13.getByRole('link', { name: 'QR de la Mesa 13' }).getAttribute('href');
+  expect(qrLink).toMatch(/[?&]t=/);
+  await clientPage.goto(`/${qrLink}`);
   await expect(clientPage.getByText('Cargando menú delicioso...')).not.toBeVisible({ timeout: 20000 });
   await clientPage.locator('.menu-card:has-text("Espresso Italiano")').getByRole('button', { name: /agregar/i }).click();
   await clientPage.locator('.cart-float-btn').click();

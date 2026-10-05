@@ -24,7 +24,9 @@ db.exec(`
     status           TEXT NOT NULL,
     current_order_id TEXT,
     payment_method   TEXT,
-    total            REAL NOT NULL DEFAULT 0
+    total            REAL NOT NULL DEFAULT 0,
+    -- Secreto del QR de la mesa: sin él no se puede unir a la mesa ni pedir a su nombre.
+    qr_token         TEXT
   );
 
   CREATE TABLE IF NOT EXISTS orders (
@@ -81,16 +83,24 @@ if (!orderColumns.includes('closed_at')) {
   db.exec('ALTER TABLE orders ADD COLUMN closed_at TEXT');
 }
 
+// Mismo caso para qr_token: las mesas de una base vieja quedan sin token, y server.js
+// les genera uno al arrancar.
+const tableColumns = db.prepare('PRAGMA table_info(tables)').all().map(col => col.name);
+if (!tableColumns.includes('qr_token')) {
+  db.exec('ALTER TABLE tables ADD COLUMN qr_token TEXT');
+}
+
 // --- PREPARED STATEMENTS ---
 
 const upsertTableStmt = db.prepare(`
-  INSERT INTO tables (id, status, current_order_id, payment_method, total)
-  VALUES (?, ?, ?, ?, ?)
+  INSERT INTO tables (id, status, current_order_id, payment_method, total, qr_token)
+  VALUES (?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     status = excluded.status,
     current_order_id = excluded.current_order_id,
     payment_method = excluded.payment_method,
-    total = excluded.total
+    total = excluded.total,
+    qr_token = excluded.qr_token
 `);
 
 const upsertOrderStmt = db.prepare(`
@@ -137,7 +147,8 @@ const rowToTable = (row) => ({
   status: row.status,
   currentOrderId: row.current_order_id,
   paymentMethod: row.payment_method,
-  total: row.total
+  total: row.total,
+  qrToken: row.qr_token
 });
 
 const rowToMenuItem = (row) => ({
@@ -177,7 +188,7 @@ export const runInTransaction = (fn) => {
 };
 
 export const persistTable = (table) => {
-  upsertTableStmt.run(table.id, table.status, table.currentOrderId, table.paymentMethod, table.total);
+  upsertTableStmt.run(table.id, table.status, table.currentOrderId, table.paymentMethod, table.total, table.qrToken || null);
 };
 
 export const persistOrder = (order) => {

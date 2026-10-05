@@ -7,3 +7,8 @@
 export const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL ||
   `${window.location.protocol}//${window.location.hostname}:3001`;
+
+// Link que va en el QR de una mesa. El token (t) es el secreto de la mesa: sin él el
+// server no deja unirse a la mesa ni pedir a su nombre.
+export const tableClientUrl = (tableId, qrToken) =>
+  `?view=client&table=${encodeURIComponent(tableId)}&t=${encodeURIComponent(qrToken)}`;

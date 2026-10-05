@@ -37,14 +37,18 @@ const ROLE_PASSWORDS = {
 // en disco sería un riesgo de seguridad innecesario para este alcance.
 const validTokens = { kitchen: new Set(), counter: new Set() };
 
-const isStaffToken = (token) => validTokens.kitchen.has(token) || validTokens.counter.has(token);
+const staffRoleOf = (token) =>
+  validTokens.counter.has(token) ? 'counter' : validTokens.kitchen.has(token) ? 'kitchen' : null;
 
-// Exige un token de staff (cocina o mostrador) vía header "Authorization: Bearer <token>"
+// Exige un token de staff (cocina o mostrador) vía header "Authorization: Bearer <token>".
+// Deja el rol en req.staffRole para los endpoints que muestran distinto según quién pide.
 const requireStaffAuth = (req, res, next) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '');
-  if (!isStaffToken(token)) {
+  const role = staffRoleOf(token);
+  if (!role) {
     return res.status(401).json({ error: 'No autorizado' });
   }
+  req.staffRole = role;
   next();
 };
 
@@ -58,14 +62,24 @@ const io = new Server(httpServer, {
 
 // --- ESTADO DE TRABAJO (en memoria, respaldado por SQLite) ---
 
-// Semilla del primer arranque: 12 mesas libres
-const INITIAL_TABLES = Array.from({ length: 12 }, (_, i) => ({
-  id: String(i + 1),
+// Token secreto del QR de cada mesa: el QR apunta a ?table=X&t=<token>, y sin el token
+// el server no deja unirse a la mesa ni pedir, pedir la cuenta o llamar al mozo a su
+// nombre. 12 bytes aleatorios (16 caracteres en base64url): imposible de adivinar y
+// corto para que el QR no quede denso.
+const newQrToken = () => crypto.randomBytes(12).toString('base64url');
+
+const createTable = (id) => ({
+  id,
   status: 'libre', // 'libre' | 'pedido_pendiente' | 'comiendo' | 'esperando_cuenta' | 'pagando_tarjeta'
   currentOrderId: null,
   paymentMethod: null,
-  total: 0
-}));
+  total: 0,
+  qrToken: newQrToken()
+});
+
+// Semilla del primer arranque: 12 mesas libres. Es una función y no una constante
+// porque cada siembra (incluido /api/test/reset) tiene que generar tokens nuevos.
+const initialTables = () => Array.from({ length: 12 }, (_, i) => createTable(String(i + 1)));
 
 // Categorías válidas en v1: los filtros del cliente están atados a estas cuatro,
 // un producto con una categoría inventada no tendría pestaña donde aparecer.
@@ -189,8 +203,13 @@ const DEFAULT_MENU = [
 // Las lecturas y la lógica de negocio operan sobre estas estructuras en memoria;
 // cada mutación se refleja en SQLite (write-through, ver db.js), así un restart
 // del server ya no borra las mesas, pedidos ni cambios del menú.
-const persistedState = loadState(INITIAL_TABLES, DEFAULT_MENU);
+const persistedState = loadState(initialTables(), DEFAULT_MENU);
 let tables = persistedState.tables;
+// Mesas de una base anterior a los tokens de QR: se les genera uno al arrancar.
+tables.filter(t => !t.qrToken).forEach(t => {
+  t.qrToken = newQrToken();
+  persistTable(t);
+});
 let orders = persistedState.orders;
 let menuCache = persistedState.menu;
 
@@ -204,6 +223,20 @@ const ASSISTANCE_REOPEN_COOLDOWN_MS = 10_000;
 // --- HELPERS ---
 
 const findTable = (tableId) => tables.find(t => t.id === tableId);
+
+// Mesa a la que está atada esta conexión (por un join con token válido), o null.
+// Se revalida contra el token actual: si la mesa se dio de baja o su QR se regeneró,
+// la conexión pierde el acceso aunque siga abierta.
+const getSocketTable = (socket) => {
+  const bound = socket.data.table;
+  if (!bound) return null;
+  const table = findTable(bound.id);
+  return table && table.qrToken === bound.token ? table : null;
+};
+
+// Saca de la sala de la mesa a todas las conexiones atadas a ella (baja de la mesa o
+// QR regenerado), así dejan de recibir sus pedidos y estado.
+const kickTableClients = (tableId) => io.in(`table-${tableId}`).socketsLeave(`table-${tableId}`);
 const getMenuItem = (productId) => menuCache.find(m => m.id === productId);
 
 // Nunca confiar en precio/nombre que manda el cliente: siempre se recalculan contra
@@ -339,7 +372,8 @@ app.post('/api/auth/login', (req, res) => {
 // Obtener estado inicial de mesas y pedidos activos (requiere sesión de personal)
 app.get('/api/initial-state', requireStaffAuth, (req, res) => {
   res.json({
-    tables,
+    // Los tokens de QR solo los necesita el mostrador (para mostrar el link de cada mesa).
+    tables: req.staffRole === 'counter' ? tables : tables.map(({ qrToken, ...t }) => t),
     // No incluye pedidos de mesas ya cerradas/cobradas. A diferencia del filtro de cocina
     // (status !== 'entregado'), esto SÍ incluye pedidos ya servidos pero aún no pagados,
     // que el mostrador necesita mostrar en el ticket. KitchenView aplica su propio filtro extra.
@@ -361,14 +395,22 @@ app.get('/api/initial-state', requireStaffAuth, (req, res) => {
 // si NODE_ENV=production, para no exponerlo en un despliegue real.
 if (process.env.NODE_ENV !== 'production') {
   app.post('/api/test/reset', (req, res) => {
-    tables = JSON.parse(JSON.stringify(INITIAL_TABLES));
+    // Las conexiones atadas a mesas viejas pierden el acceso: cada reset genera tokens nuevos.
+    tables = initialTables();
     orders = [];
     // El menú también vuelve a la semilla: los specs de menú crean/borran productos
     // y los demás specs piden los productos por nombre esperando sus precios de fábrica.
     menuCache = JSON.parse(JSON.stringify(DEFAULT_MENU));
     activeAssistanceRequests.clear();
-    resetState(INITIAL_TABLES, DEFAULT_MENU);
+    resetState(tables, DEFAULT_MENU);
     res.json({ ok: true });
+  });
+
+  // Links con token de cada mesa para el simulador de QR del portal y para los tests
+  // E2E. Expone los tokens sin login, por eso tampoco existe en producción: ahí los
+  // links salen solo del Mostrador.
+  app.get('/api/demo/table-links', (req, res) => {
+    res.json(tables.map(t => ({ id: t.id, qrToken: t.qrToken })));
   });
 }
 
@@ -378,9 +420,9 @@ io.on('connection', (socket) => {
   console.log(`Cliente conectado: ${socket.id}`);
 
   // Unirse a un rol/canal específico. 'kitchen' y 'counter' son canales de personal
-  // y requieren un token de sesión válido; 'table-X' es público (lo usa el cliente).
+  // y requieren un token de sesión válido; 'table-X' requiere el token del QR de la mesa.
   socket.on('join', ({ role, token } = {}) => {
-    if (!role) return;
+    if (typeof role !== 'string') return;
 
     if (role === 'kitchen' || role === 'counter') {
       if (!validTokens[role].has(token)) {
@@ -389,17 +431,34 @@ io.on('connection', (socket) => {
       }
       socket.data.roles = socket.data.roles || new Set();
       socket.data.roles.add(role);
+      socket.join(role);
+      console.log(`Socket ${socket.id} se unió al canal: ${role}`);
+      return;
     }
 
-    socket.join(role);
-    console.log(`Socket ${socket.id} se unió al canal: ${role}`);
-
-    // Si es un cliente de mesa, también se une a su canal específico de mesa
     if (role.startsWith('table-')) {
       const tableId = role.replace('table-', '');
-      // null explícito si la mesa no existe (QR viejo de una mesa dada de baja):
-      // el cliente lo usa para mostrar "mesa no disponible" en vez de quedarse mudo.
-      socket.emit('table-state', findTable(tableId) || null);
+      const table = findTable(tableId);
+      // null explícito si la mesa no existe (QR viejo de una mesa dada de baja) o el
+      // token no es el de su QR (URL armada a mano, QR regenerado): el cliente lo usa
+      // para mostrar "mesa no disponible" en vez de quedarse mudo. Sin token válido no
+      // entra a la sala, así que tampoco ve los pedidos ni el estado de esa mesa.
+      if (!table || typeof token !== 'string' || token !== table.qrToken) {
+        socket.emit('table-state', null);
+        return;
+      }
+
+      // Una conexión atiende a una sola mesa: el simulador del portal puede cambiar de
+      // mesa en la misma pestaña, y la mesa anterior no tiene que seguir recibiendo eventos.
+      const previous = socket.data.table;
+      if (previous && previous.id !== tableId) socket.leave(`table-${previous.id}`);
+      // Los eventos del cliente (new-order, request-bill, request-assistance) usan esta
+      // mesa y no el tableId que manda el navegador (ver getSocketTable).
+      socket.data.table = { id: tableId, token };
+      socket.join(role);
+      console.log(`Socket ${socket.id} se unió al canal: ${role}`);
+
+      socket.emit('table-state', table);
       // Hidratar todos los pedidos activos de la mesa (no solo el último), para que el
       // cliente pueda armar "Mi Cuenta Parcial" aunque recién esté entrando/recargando
       // la página con pedidos ya en curso. Reutiliza el mismo evento que usan las
@@ -415,14 +474,13 @@ io.on('connection', (socket) => {
   // (antes existía update-order, que mezclaba items en un pedido que cocina podía
   // tener ya en preparación o listo, y esos items nuevos nunca se preparaban).
   // Las correcciones de un pedido quedan del lado del Mostrador (edit-order/cancel-order).
-  socket.on('new-order', (orderData) => {
-    // El tableId puede llegar como número o string según cómo navegó el cliente en el frontend;
-    // se normaliza a string porque tables[].id siempre es string.
-    const tableId = String(orderData.tableId);
-    // La mesa tiene que existir: ahora que se pueden dar de baja mesas, un QR viejo
-    // no puede generar pedidos huérfanos que cocina prepararía para nadie.
-    const table = findTable(tableId);
+  socket.on('new-order', (orderData = {}) => {
+    // La mesa es la de la conexión, no el tableId del payload: antes, desde las devtools,
+    // la mesa 3 podía pedir a nombre de la 7. También cubre las mesas dadas de baja: un
+    // QR viejo no puede generar pedidos huérfanos que cocina prepararía para nadie.
+    const table = getSocketTable(socket);
     if (!table) return;
+    const tableId = table.id;
 
     const { notes, paymentMethod } = orderData;
     const items = sanitizeItems(orderData.items);
@@ -557,10 +615,10 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Solicitar cierre de cuenta (desde Cliente)
-  socket.on('request-bill', ({ tableId: rawTableId, paymentMethod }) => {
-    const tableId = String(rawTableId);
-    const table = findTable(tableId);
+  socket.on('request-bill', ({ paymentMethod } = {}) => {
+    const table = getSocketTable(socket);
     if (!table) return;
+    const tableId = table.id;
     // Mismas reglas que la UI del cliente (el botón solo aparece en "comiendo"): método
     // de pago conocido y la mesa con todo entregado. Antes cualquier valor que no fuera
     // 'efectivo' se tomaba como tarjeta, y una mesa libre en $0 podía "pedir la cuenta".
@@ -582,9 +640,10 @@ io.on('connection', (socket) => {
   // apenas se habilita el botón, sin bloquear un segundo pedido de ayuda legítimo).
   // Siempre responde assistance-ack al cliente que pidió: antes el rechazo por cooldown
   // era silencioso y la UI quedaba en "Mozo en camino..." 60s sin ningún llamado real.
-  socket.on('request-assistance', ({ tableId: rawTableId }) => {
-    const tableId = String(rawTableId);
-    if (!findTable(tableId)) return;
+  socket.on('request-assistance', () => {
+    const table = getSocketTable(socket);
+    if (!table) return;
+    const tableId = table.id;
 
     const existing = activeAssistanceRequests.get(tableId);
     const now = Date.now();
@@ -627,7 +686,8 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Agregar una mesa nueva (desde Mostrador). Sin número pedido, se asigna el
-  // más chico sin usar: así reponer una mesa dada de baja reutiliza su QR ya impreso.
+  // más chico sin usar. La mesa nace con un token nuevo: reponer una mesa dada de baja
+  // necesita un QR nuevo (el viejo, con el token anterior, ya no vale).
   socket.on('add-table', ({ id } = {}) => {
     if (!socket.data.roles?.has('counter')) return;
 
@@ -644,18 +704,16 @@ io.on('connection', (socket) => {
       tableId = String(n);
     }
 
-    const newTable = { id: tableId, status: 'libre', currentOrderId: null, paymentMethod: null, total: 0 };
+    const newTable = createTable(tableId);
     tables.push(newTable);
     tables.sort((a, b) => Number(a.id) - Number(b.id));
     persistTable(newTable);
 
     broadcastTables();
-    // Si alguien ya estaba mirando el QR de ese número, su mesa "revive" al instante.
-    io.to(`table-${tableId}`).emit('table-state', newTable);
   });
 
   // Evento: Quitar una mesa (desde Mostrador). Puede quitarse cualquiera —las demás
-  // conservan su número, clave porque los QR impresos apuntan a ?table=X— pero solo si
+  // conservan su número y su QR impreso— pero solo si
   // está libre: sin pedidos activos ni llamados al mozo pendientes. Una mesa ocupada
   // se cobra/cierra primero; si no, se destruiría consumo en curso sin registro.
   socket.on('remove-table', ({ tableId: rawTableId } = {}) => {
@@ -677,6 +735,25 @@ io.on('connection', (socket) => {
     broadcastTables();
     // El QR viejo deja de valer: cualquier cliente mirando esa mesa pasa a "no disponible".
     io.to(`table-${tableId}`).emit('table-removed');
+    kickTableClients(tableId);
+  });
+
+  // Evento: Regenerar el QR de una mesa (desde Mostrador). Para cuando el link de una
+  // mesa se filtró (alguien se lo llevó y pide a su nombre desde afuera): el token viejo
+  // deja de valer al instante y quien esté conectado con él pierde el acceso. Se permite
+  // con la mesa ocupada a propósito, porque ese es justamente el caso urgente; el consumo
+  // de la mesa no se toca, y los clientes sentados escanean el QR nuevo.
+  socket.on('regenerate-table-qr', ({ tableId: rawTableId } = {}) => {
+    if (!socket.data.roles?.has('counter')) return;
+    const table = findTable(String(rawTableId));
+    if (!table) return;
+
+    table.qrToken = newQrToken();
+    persistTable(table);
+
+    broadcastTables();
+    io.to(`table-${table.id}`).emit('table-removed');
+    kickTableClients(table.id);
   });
 
   // Evento: Confirmar cobro y liberar mesa (desde Mostrador/Caja)
@@ -700,13 +777,15 @@ io.on('connection', (socket) => {
         }
       });
 
-      // Resetear mesa a valores iniciales
+      // Resetear mesa a valores iniciales. El token se conserva: el QR impreso en la
+      // mesa tiene que seguir sirviendo para los próximos clientes.
       tables[tableIndex] = {
         id: tableId,
         status: 'libre',
         currentOrderId: null,
         paymentMethod: null,
-        total: 0
+        total: 0,
+        qrToken: tables[tableIndex].qrToken
       };
       activeAssistanceRequests.delete(tableId);
 

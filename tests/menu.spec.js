@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clientUrl, joinTable } from './helpers.js';
 import { io } from 'socket.io-client';
 
 const BACKEND = 'http://localhost:3001';
@@ -33,7 +34,7 @@ test('menú administrable: CRUD, stock en vivo y seguridad', async ({ browser })
   await counterPage.getByRole('button', { name: /ingresar/i }).click();
 
   // Cliente en Mesa 4 (las demás suites usan 1, 2, 3 y 13)
-  await clientPage.goto('/?view=client&table=4');
+  await clientPage.goto(await clientUrl(4));
   await expect(clientPage.getByText('Cargando menú delicioso...')).not.toBeVisible({ timeout: 20000 });
 
   // 1. ALTA DE PRODUCTO DESDE EL MOSTRADOR
@@ -79,7 +80,9 @@ test('menú administrable: CRUD, stock en vivo y seguridad', async ({ browser })
 
   const attacker = io(BACKEND, { transports: ['websocket'] });
   await new Promise(resolve => attacker.on('connect', resolve));
-  attacker.emit('new-order', { tableId: '5', items: [{ productId: cafe.id, quantity: 3, price: 1 }] });
+  // Con el token de la mesa: así lo único que puede frenar el pedido es el stock.
+  await joinTable(attacker, '5');
+  attacker.emit('new-order', { items: [{ productId: cafe.id, quantity: 3, price: 1 }] });
   await counterPage.waitForTimeout(1500);
   const mesa5 = counterPage.locator('.table-card', { hasText: 'Mesa 5' });
   await expect(mesa5.getByText('Mesa vacía')).toBeVisible();

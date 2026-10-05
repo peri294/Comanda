@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clientUrl, joinTable } from './helpers.js';
 import { io } from 'socket.io-client';
 
 const BACKEND = 'http://localhost:3001';
@@ -10,7 +11,7 @@ test('cada ronda del cliente es una comanda nueva en cocina, sin tocar la que ya
   const kitchenPage = await kitchenContext.newPage();
 
   // Mesa distinta a e2e.spec.js: si Playwright corre los specs en paralelo, no se pisan.
-  await clientPage.goto('/?view=client&table=2');
+  await clientPage.goto(await clientUrl(2));
   await kitchenPage.goto('/?view=kitchen');
 
   // Login de cocina (pantalla protegida por contraseña compartida de personal)
@@ -68,7 +69,7 @@ test('update-order ya no existe: un socket no puede meter items en un pedido aje
 
   // Mesa 8: libre de los otros specs que corren en paralelo
   const client = await connect();
-  client.emit('join', { role: 'table-8' });
+  await joinTable(client, '8');
   const orderPromise = new Promise(resolve => client.once('order-status-changed', resolve));
   client.emit('new-order', { tableId: '8', items: [{ productId: 'm1', quantity: 1 }] });
   const order = await orderPromise;

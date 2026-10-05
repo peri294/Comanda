@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clientUrl } from './helpers.js';
 
 test('cliente realiza un pedido y aparece en cocina', async ({ browser }) => {
   const clientContext = await browser.newContext();
@@ -7,7 +8,7 @@ test('cliente realiza un pedido y aparece en cocina', async ({ browser }) => {
   const kitchenPage = await kitchenContext.newPage();
 
   // Navegar a las vistas (CORREGIDO: agregar table=1)
-  await clientPage.goto('/?view=client&table=1');
+  await clientPage.goto(await clientUrl(1));
   await kitchenPage.goto('/?view=kitchen');
 
   // Login de cocina (pantalla protegida por contraseña compartida de personal)

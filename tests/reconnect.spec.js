@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clientUrl } from './helpers.js';
 
 // Cubre los dos fixes de sincronización:
 // 1. El server responde assistance-ack al pedir asistencia: un rechazo por cooldown
@@ -13,7 +14,7 @@ test('cooldown de asistencia: el rechazo rehabilita el botón sin alertar al mos
   const counterPage = await counterContext.newPage();
 
   // Mesa 5: libre de los otros specs que corren en paralelo
-  await clientPage.goto('/?view=client&table=5');
+  await clientPage.goto(await clientUrl(5));
   await counterPage.goto('/?view=counter');
 
   await counterPage.getByPlaceholder('Contraseña').fill('mostrador123');
@@ -57,7 +58,7 @@ test('el mostrador se resincroniza al reconectar el socket', async ({ browser })
   const counterPage = await counterContext.newPage();
 
   // Mesa 6: libre de los otros specs que corren en paralelo
-  await clientPage.goto('/?view=client&table=6');
+  await clientPage.goto(await clientUrl(6));
   await counterPage.goto('/?view=counter');
 
   await counterPage.getByPlaceholder('Contraseña').fill('mostrador123');

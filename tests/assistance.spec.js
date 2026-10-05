@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clientUrl } from './helpers.js';
 
 test('flujo de asistencia y cuenta parcial', async ({ browser }) => {
   const clientContext = await browser.newContext();
@@ -7,7 +8,7 @@ test('flujo de asistencia y cuenta parcial', async ({ browser }) => {
   const counterPage = await counterContext.newPage();
 
   // Navegar a vistas usando Mesa 3 (para no pisar otros tests paralelos)
-  await clientPage.goto('/?view=client&table=3');
+  await clientPage.goto(await clientUrl(3));
   await counterPage.goto('/?view=counter');
 
   // Login de Mostrador

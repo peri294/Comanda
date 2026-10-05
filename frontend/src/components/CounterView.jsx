@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
+import { tableClientUrl } from '../config';
 import { createAudioContext, playTone } from '../utils/sound';
 import { BACKEND_URL } from '../config';
 
@@ -294,8 +295,15 @@ export default function CounterView({ socket, token, onLogout }) {
   };
 
   const handleRemoveTable = (tableId) => {
-    if (!window.confirm(`¿Dar de baja la Mesa ${tableId}? Su QR dejará de funcionar hasta que se vuelva a agregar.`)) return;
+    if (!window.confirm(`¿Dar de baja la Mesa ${tableId}? Su QR deja de funcionar: si se vuelve a agregar, va a necesitar un QR nuevo.`)) return;
     socket.emit('remove-table', { tableId });
+  };
+
+  // Para cuando el link de una mesa se filtró: el server genera un token nuevo y el
+  // QR anterior deja de funcionar al instante (el consumo de la mesa no se toca).
+  const handleRegenerateQr = (tableId) => {
+    if (!window.confirm(`¿Regenerar el QR de la Mesa ${tableId}? El QR actual deja de funcionar y hay que reemplazarlo en la mesa. Si hay clientes sentados, tienen que escanear el nuevo.`)) return;
+    socket.emit('regenerate-table-qr', { tableId });
   };
 
   // --- Administración del menú ---
@@ -452,6 +460,28 @@ export default function CounterView({ socket, token, onLogout }) {
                         {table.status === 'esperando_cuenta' && 'Espera Efectivo'}
                         {table.status === 'pagando_tarjeta' && 'Espera Tarjeta'}
                       </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <a
+                        href={tableClientUrl(table.id, table.qrToken)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-secondary"
+                        style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                        title={`Abrir el link del QR de la Mesa ${table.id}`}
+                        aria-label={`QR de la Mesa ${table.id}`}
+                      >
+                        <QrCode size={12} />
+                      </a>
+                      <button
+                        className="btn-secondary"
+                        style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                        onClick={() => handleRegenerateQr(table.id)}
+                        title={`Regenerar el QR de la Mesa ${table.id} (el anterior deja de funcionar)`}
+                        aria-label={`Regenerar QR de la Mesa ${table.id}`}
+                      >
+                        <RefreshCw size={12} />
+                      </button>
                     </div>
                   </div>
 

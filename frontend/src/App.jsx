@@ -7,11 +7,15 @@ import CounterView from './components/CounterView';
 import StaffLogin from './components/StaffLogin';
 import { createAudioContext, playTone } from './utils/sound';
 import { useStaffAuth } from './hooks/useStaffAuth';
-import { BACKEND_URL } from './config';
+import { BACKEND_URL, tableClientUrl } from './config';
 
 export default function App() {
   const [view, setView] = useState('portal'); // 'portal', 'client', 'kitchen', 'counter'
   const [tableId, setTableId] = useState(null);
+  const [qrToken, setQrToken] = useState(null);
+  // Links con token de las mesas para el simulador de QR del portal. null mientras carga
+  // o si el backend no los expone (en producción no existe el endpoint de demo).
+  const [demoTableLinks, setDemoTableLinks] = useState(null);
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const kitchenAuth = useStaffAuth('kitchen');
@@ -27,6 +31,7 @@ export default function App() {
       if (viewParam === 'client' && tableParam) {
         setView('client');
         setTableId(tableParam);
+        setQrToken(params.get('t'));
       } else if (viewParam === 'kitchen') {
         setView('kitchen');
       } else if (viewParam === 'counter') {
@@ -94,11 +99,12 @@ export default function App() {
   };
 
   // Helper to change view and update browser URL without reloading
-  const navigateTo = (newView, table = null) => {
+  const navigateTo = (newView, table = null, token = null) => {
     const params = new URLSearchParams();
     if (newView !== 'portal') {
       params.set('view', newView);
       if (table) params.set('table', table);
+      if (token) params.set('t', token);
     }
     const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
     window.history.pushState({}, '', newUrl);
@@ -107,7 +113,20 @@ export default function App() {
     // Normalizado a string: el backend compara el id de mesa como string,
     // y el botón "Ir a Mesa" pasa un número mientras que la URL siempre da un string.
     setTableId(table !== null ? String(table) : null);
+    setQrToken(token);
   };
+
+  // Se recargan cada vez que se vuelve al portal: el mostrador puede haber agregado,
+  // quitado mesas o regenerado un QR mientras tanto.
+  useEffect(() => {
+    if (view !== 'portal') return;
+    let cancelled = false;
+    fetch(`${BACKEND_URL}/api/demo/table-links`)
+      .then(res => (res.ok ? res.json() : null))
+      .catch(() => null)
+      .then(links => { if (!cancelled) setDemoTableLinks(links); });
+    return () => { cancelled = true; };
+  }, [view]);
 
   return (
     <div className="app-container">
@@ -156,10 +175,10 @@ export default function App() {
       <main className="main-content">
         
         {/* VIEW 1: Customer View */}
-        {/* key={tableId} fuerza un remount completo al cambiar de mesa en la misma pestaña,
+        {/* key fuerza un remount completo al cambiar de mesa (o de QR) en la misma pestaña,
             evitando que el carrito/pedido activo de una mesa quede pegado al pasar a otra */}
         {view === 'client' && tableId && (
-          <ClientView key={tableId} tableId={tableId} socket={socket} />
+          <ClientView key={`${tableId}:${qrToken}`} tableId={tableId} qrToken={qrToken} socket={socket} />
         )}
 
         {/* VIEW 2: Kitchen Screen (detrás de login de personal) */}
@@ -256,9 +275,14 @@ export default function App() {
                 Haz clic en cualquier mesa para simular el escaneo del código QR por parte de un cliente. Se recomienda abrir las mesas en pestañas nuevas para probar el flujo simultáneo.
               </p>
 
+              {!demoTableLinks && (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '16px' }}>
+                  Los links de las mesas se abren desde el Mostrador (botón de QR en cada mesa).
+                </p>
+              )}
+
               <div className="qr-grid">
-                {Array.from({ length: 12 }, (_, i) => {
-                  const tableNum = i + 1;
+                {(demoTableLinks || []).map(({ id: tableNum, qrToken: token }) => {
                   return (
                     <div key={tableNum} className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', background: 'rgba(255, 255, 255, 0.02)' }}>
                       <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--accent-gold)' }}>Mesa {tableNum}</div>
@@ -266,12 +290,12 @@ export default function App() {
                         <button 
                           className="btn-primary" 
                           style={{ padding: '6px 8px', fontSize: '0.75rem', borderRadius: '6px', width: '100%' }}
-                          onClick={() => navigateTo('client', tableNum)}
+                          onClick={() => navigateTo('client', tableNum, token)}
                         >
                           Ir a Mesa
                         </button>
                         <a 
-                          href={`?view=client&table=${tableNum}`} 
+                          href={tableClientUrl(tableNum, token)} 
                           target="_blank" 
                           rel="noopener noreferrer" 
                           className="btn-secondary" 

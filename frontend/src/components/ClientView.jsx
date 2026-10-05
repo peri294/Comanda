@@ -7,7 +7,7 @@ import {
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
 
-export default function ClientView({ tableId, socket }) {
+export default function ClientView({ tableId, qrToken, socket }) {
   const [menu, setMenu] = useState([]);
   const [filteredMenu, setFilteredMenu] = useState([]);
   const [activeCategory, setActiveCategory] = useState('todos');
@@ -41,8 +41,9 @@ export default function ClientView({ tableId, socket }) {
   };
   useEffect(() => () => clearTimeout(assistanceTimerRef.current), []);
 
-  // La mesa no existe en el backend (QR viejo de una mesa dada de baja, o URL manual
-  // inválida): se bloquea toda la vista en vez de dejar pedir a una mesa fantasma.
+  // La mesa no existe en el backend o el token del QR no es el suyo (QR viejo de una
+  // mesa dada de baja o regenerada, URL armada a mano): se bloquea toda la vista en vez
+  // de dejar pedir a una mesa fantasma.
   const [tableUnavailable, setTableUnavailable] = useState(false);
 
   // Sincroniza catálogo y carrito con un menú nuevo (del fetch inicial, de un
@@ -95,7 +96,8 @@ export default function ClientView({ tableId, socket }) {
     }
   }, [activeCategory, menu]);
 
-  useSocketRoom(socket, tableId ? `table-${tableId}` : null);
+  // El token del QR viaja en el join: el server ata esta conexión a la mesa solo si es válido.
+  useSocketRoom(socket, tableId ? `table-${tableId}` : null, qrToken);
 
   // Socket Connection and Event Listeners
   useEffect(() => {
@@ -106,12 +108,12 @@ export default function ClientView({ tableId, socket }) {
         setTableState(state);
         setTableUnavailable(false); // la mesa existe (o volvió a darse de alta)
       } else {
-        // El backend responde null al unirse a una mesa que no existe
+        // El backend responde null si la mesa no existe o el token del QR no vale
         setTableUnavailable(true);
       }
     });
 
-    // La mesa fue dada de baja desde el mostrador mientras la estábamos mirando
+    // El mostrador dio de baja la mesa o regeneró su QR mientras la estábamos mirando
     socket.on('table-removed', () => {
       setCart([]);
       setOrders({});
@@ -172,7 +174,7 @@ export default function ClientView({ tableId, socket }) {
   // 60s si ninguna respuesta llega (ej. desconexión justo después de emitir).
   const callWaiter = () => {
     if (assistanceRequested) return;
-    socket.emit('request-assistance', { tableId });
+    socket.emit('request-assistance');
     setAssistanceRequested(true);
     armAssistanceTimer(60000);
   };
@@ -225,8 +227,8 @@ export default function ClientView({ tableId, socket }) {
   const submitOrder = () => {
     if (cart.length === 0) return;
 
+    // La mesa no viaja en el payload: el server usa la mesa a la que se unió esta conexión.
     const orderData = {
-      tableId,
       items: cart.map(item => ({
         productId: item.id,
         name: item.name,
@@ -245,7 +247,7 @@ export default function ClientView({ tableId, socket }) {
 
   // Close account (request bill)
   const requestBill = (method) => {
-    socket.emit('request-bill', { tableId, paymentMethod: method });
+    socket.emit('request-bill', { paymentMethod: method });
   };
 
   if (loading) {
@@ -264,7 +266,7 @@ export default function ClientView({ tableId, socket }) {
           <Coffee size={48} style={{ color: 'var(--text-muted)', margin: '0 auto 16px auto' }} />
           <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>Esta mesa no está disponible</h2>
           <p style={{ color: 'var(--text-secondary)' }}>
-            La mesa {tableId} no existe o fue dada de baja. Por favor consultá al personal de la cafetería o escaneá el QR de otra mesa.
+            El QR de la mesa {tableId} no es válido o la mesa fue dada de baja. Por favor escaneá de nuevo el QR de tu mesa o consultá al personal de la cafetería.
           </p>
         </div>
       </div>

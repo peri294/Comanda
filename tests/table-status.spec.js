@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clientUrl, joinTable } from './helpers.js';
 import { io } from 'socket.io-client';
 
 const BACKEND = 'http://localhost:3001';
@@ -52,7 +53,7 @@ test('la mesa pasa a "comiendo" recién cuando todos sus pedidos están entregad
   const counterToken = await login('counter', 'mostrador123');
   // Mesa 10: libre de los otros specs que corren en paralelo
   const client = await connect();
-  client.emit('join', { role: 'table-10' });
+  await joinTable(client, '10');
 
   const order1 = await placeOrder(client, '10', 'm1');
   kitchen.socket.emit('update-order-status', { orderId: order1.id, status: 'en_preparacion' });
@@ -81,7 +82,7 @@ test('la cuenta se pide con todo entregado; pedir algo más la cancela y sigue s
   });
   // Mesa 11: libre de los otros specs que corren en paralelo
   const client = await connect();
-  client.emit('join', { role: 'table-11' });
+  await joinTable(client, '11');
 
   const order1 = await placeOrder(client, '11', 'm1'); // Espresso $1800
   kitchen.socket.emit('update-order-status', { orderId: order1.id, status: 'listo' });
@@ -119,7 +120,7 @@ test('el cliente puede seguir pidiendo con la cuenta solicitada, avisado de que 
   const kitchen = await connectStaff('kitchen', 'cocina123');
   const clientPage = await (await browser.newContext()).newPage();
   // Mesa 12: libre de los otros specs que corren en paralelo
-  await clientPage.goto('/?view=client&table=12');
+  await clientPage.goto(await clientUrl(12));
   await expect(clientPage.getByText('Cargando menú delicioso...')).not.toBeVisible({ timeout: 20000 });
 
   const orderCreated = new Promise(resolve => {
