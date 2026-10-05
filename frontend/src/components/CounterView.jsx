@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
-import { BACKEND_URL, tableClientUrl } from '../config';
+import { BACKEND_URL } from '../config';
+import TableQrModal from './TableQrModal';
 import { createAudioContext, playTone } from '../utils/sound';
 import { MENU_CATEGORIES } from '../menuCategories';
 
@@ -42,6 +43,9 @@ export default function CounterView({ socket, token, onLogout }) {
   // Solo el id: la mesa y sus pedidos se derivan en vivo de `tables`/`activeOrders`
   // en cada render, así el modal no queda con datos viejos mientras está abierto.
   const [selectedTableId, setSelectedTableId] = useState(null);
+  // Mesa cuyo QR se está mostrando. También solo el id: si se regenera el QR con el
+  // modal abierto, se ve el nuevo.
+  const [qrTableId, setQrTableId] = useState(null);
   const [dailySales, setDailySales] = useState(0);
   const [menu, setMenu] = useState([]);
 
@@ -343,6 +347,7 @@ export default function CounterView({ socket, token, onLogout }) {
 
   // Mesa y pedidos seleccionados, derivados en vivo (no una copia congelada al abrir el modal)
   const selectedTable = selectedTableId ? tables.find(t => t.id === selectedTableId) : null;
+  const qrTable = qrTableId ? tables.find(t => t.id === qrTableId) : null;
   const selectedTableOrders = selectedTableId
     ? activeOrders.filter(o => o.tableId === selectedTableId).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
     : [];
@@ -469,17 +474,15 @@ export default function CounterView({ socket, token, onLogout }) {
                       >
                         {willEnable ? <LockOpen size={12} /> : <Lock size={12} />}
                       </button>
-                      <a
-                        href={tableClientUrl(table.id, table.qrToken)}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
                         className="btn-secondary"
                         style={smallButtonStyle}
-                        title={`Abrir el link del QR de la Mesa ${table.id}`}
+                        onClick={() => setQrTableId(table.id)}
+                        title={`Ver e imprimir el QR de la Mesa ${table.id}`}
                         aria-label={`QR de la Mesa ${table.id}`}
                       >
                         <QrCode size={12} />
-                      </a>
+                      </button>
                       <button
                         className="btn-secondary"
                         style={smallButtonStyle}
@@ -748,6 +751,8 @@ export default function CounterView({ socket, token, onLogout }) {
           </div>
         </div>
       )}
+
+      {qrTable && <TableQrModal table={qrTable} onClose={() => setQrTableId(null)} />}
 
       {/* Table Detail Modal */}
       {selectedTable && (

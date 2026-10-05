@@ -720,3 +720,42 @@ body {
 .cart-float-btn:hover {
   transform: scale(1.1);
 }
+
+/* QR de una mesa (TableQrModal). Fondo blanco siempre: un QR claro sobre oscuro
+   no lo leen todos los celulares. */
+.qr-code-box {
+  display: inline-block;
+  background: #fff;
+  border-radius: 12px;
+  padding: 8px;
+  line-height: 0;
+}
+
+/* Hoja imprimible del QR: invisible en pantalla; al imprimir es lo único que sale */
+.qr-print-sheet {
+  display: none;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+  #root {
+    display: none;
+  }
+  .qr-print-sheet {
+    display: block;
+    text-align: center;
+    padding-top: 40px;
+    color: #000;
+  }
+  .qr-print-title {
+    font-size: 2.4rem;
+    font-weight: 800;
+    margin-bottom: 16px;
+  }
+  .qr-print-caption {
+    font-size: 1.1rem;
+    margin-top: 16px;
+  }
+}
