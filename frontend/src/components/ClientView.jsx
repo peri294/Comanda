@@ -216,6 +216,10 @@ export default function ClientView({ tableId, socket }) {
     .filter(o => !o.archived)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
+  // Con la cuenta pedida se puede seguir pidiendo: el server cancela la solicitud de
+  // cuenta y el consumo sigue sumando (hay que volver a pedirla al terminar).
+  const billRequested = tableState.status === 'esperando_cuenta' || tableState.status === 'pagando_tarjeta';
+
   // Send Order: cada envío es una comanda nueva para cocina, nunca se modifica un
   // pedido ya enviado (la cuenta de la mesa suma todos los pedidos igual).
   const submitOrder = () => {
@@ -437,11 +441,14 @@ export default function ClientView({ tableId, socket }) {
           <div style={{ marginTop: '20px', fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-gold)' }}>
             Total: ${tableState.total}
           </div>
+          <p style={{ color: 'var(--text-secondary)', marginTop: '12px', fontSize: '0.9rem' }}>
+            ¿Te olvidaste de algo? Podés seguir pidiendo, pero se cancela la solicitud de cuenta.
+          </p>
         </div>
       )}
 
       {/* Menu and Ordering Interface */}
-      {(tableState.status === 'libre' || tableState.status === 'pedido_pendiente' || tableState.status === 'comiendo') && (
+      {(tableState.status === 'libre' || tableState.status === 'pedido_pendiente' || tableState.status === 'comiendo' || billRequested) && (
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <h3 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Nuestro Menú</h3>
@@ -573,6 +580,12 @@ export default function ClientView({ tableId, socket }) {
               <span style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Total:</span>
               <span style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-gold)' }}>${cartTotal}</span>
             </div>
+
+            {billRequested && (
+              <p style={{ color: 'var(--accent-gold)', marginTop: '16px', fontSize: '0.9rem', textAlign: 'center' }}>
+                Ya pediste la cuenta: al enviar este pedido se cancela y el consumo sigue sumando.
+              </p>
+            )}
 
             <button
               className="btn-primary"

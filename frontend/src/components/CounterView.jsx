@@ -111,6 +111,18 @@ export default function CounterView({ socket, token, onLogout }) {
       playNotificationSound('alert');
     });
 
+    // La mesa pidió algo más después de pedir la cuenta: la solicitud queda cancelada
+    socket.on('bill-cancelled', ({ tableId }) => {
+      addNotification({
+        id: Date.now(),
+        type: 'bill_cancelled',
+        title: 'Cuenta cancelada',
+        message: `Mesa ${tableId} pidió algo más: se canceló la solicitud de cuenta y el consumo sigue sumando.`,
+        time: new Date().toLocaleTimeString()
+      });
+      playNotificationSound('alert');
+    });
+
     // Full order list sync (item merges, status changes, table closed)
     socket.on('orders-updated', (updatedOrders) => {
       setActiveOrders(updatedOrders);
@@ -161,6 +173,7 @@ export default function CounterView({ socket, token, onLogout }) {
       socket.off('tables-updated');
       socket.off('order-received-counter');
       socket.off('bill-requested');
+      socket.off('bill-cancelled');
       socket.off('orders-updated');
       socket.off('daily-sales-updated');
       socket.off('register-closed');

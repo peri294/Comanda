@@ -262,6 +262,20 @@ const sanitizeMenuFields = ({ name, description, price, category, image } = {}) 
   };
 };
 
+const isBillRequested = (table) => table.status === 'esperando_cuenta' || table.status === 'pagando_tarjeta';
+
+// Deriva el estado de la mesa de TODOS sus pedidos activos, no del último evento:
+// antes, entregar el pedido 1 pasaba la mesa a "comiendo" aunque el pedido 2 siguiera
+// en cocina, y pisaba un pedido de cuenta hecho mientras el mozo llevaba la comida.
+// Con la cuenta pedida no se toca (solo la cancela un pedido nuevo, ver new-order);
+// sin pedidos activos tampoco (eso lo resuelve recomputeTableTotal liberando la mesa).
+const syncTableStatus = (table) => {
+  if (isBillRequested(table)) return;
+  const activeOrders = orders.filter(o => o.tableId === table.id && !o.archived);
+  if (activeOrders.length === 0) return;
+  table.status = activeOrders.every(o => o.status === 'entregado') ? 'comiendo' : 'pedido_pendiente';
+};
+
 // Recalcula el total de una mesa a partir de sus pedidos activos (no archivados).
 const recomputeTableTotal = (tableId) => {
   const table = findTable(tableId);
@@ -279,6 +293,8 @@ const recomputeTableTotal = (tableId) => {
     // El pedido "actual" de la mesa se canceló, pero quedan otros: apuntar al más reciente.
     table.currentOrderId = activeOrders[activeOrders.length - 1].id;
   }
+  // Si el mostrador canceló el único pedido sin entregar, la mesa pasa a "comiendo".
+  syncTableStatus(table);
 };
 
 // Cocina no necesita ver pedidos ya entregados ni cancelados por el mostrador.
@@ -422,10 +438,15 @@ io.on('connection', (socket) => {
     
     orders.push(newOrder);
 
+    // Si la mesa ya había pedido la cuenta, pedir algo más la cancela: el consumo sigue
+    // sumando y la cuenta se vuelve a pedir cuando terminen (con su método de pago).
+    const billCancelled = isBillRequested(table);
+
     // Actualizar estado de la mesa
     table.status = 'pedido_pendiente';
     table.currentOrderId = newOrder.id;
     table.total += orderTotal;
+    if (billCancelled) table.paymentMethod = null;
     if (paymentMethod) table.paymentMethod = paymentMethod;
 
     runInTransaction(() => {
@@ -436,6 +457,8 @@ io.on('connection', (socket) => {
     // Notificar a cocina, mostrador y a la mesa correspondiente
     io.to('kitchen').emit('order-received', newOrder);
     io.to('counter').emit('order-received-counter', newOrder);
+    // Alerta aparte: el mozo puede estar yendo a la mesa con la cuenta impresa.
+    if (billCancelled) io.to('counter').emit('bill-cancelled', { tableId });
     broadcastTables();
     io.to(`table-${tableId}`).emit('table-state', table);
     io.to(`table-${tableId}`).emit('order-status-changed', newOrder);
@@ -448,12 +471,9 @@ io.on('connection', (socket) => {
     if (!order) return;
     order.status = status;
 
-    // Si el pedido se entrega, actualizamos el estado de la mesa a 'comiendo'
+    // La mesa pasa a 'comiendo' recién cuando TODOS sus pedidos activos están entregados
     const table = findTable(order.tableId);
-    if (table) {
-      if (status === 'en_preparacion') table.status = 'pedido_pendiente'; // Sigue pendiente/preparando
-      else if (status === 'entregado') table.status = 'comiendo';
-    }
+    if (table) syncTableStatus(table);
 
     runInTransaction(() => {
       persistOrder(order);
