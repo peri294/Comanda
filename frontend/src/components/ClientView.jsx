@@ -216,10 +216,8 @@ export default function ClientView({ tableId, socket }) {
     .filter(o => !o.archived)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
-  // An order can still receive extra items only while it hasn't been delivered/cancelled
-  const canMergeIntoActiveOrder = activeOrder && activeOrder.status !== 'entregado' && activeOrder.status !== 'cancelado';
-
-  // Send Order (creates a new order, or merges into the active undelivered one)
+  // Send Order: cada envío es una comanda nueva para cocina, nunca se modifica un
+  // pedido ya enviado (la cuenta de la mesa suma todos los pedidos igual).
   const submitOrder = () => {
     if (cart.length === 0) return;
 
@@ -234,11 +232,7 @@ export default function ClientView({ tableId, socket }) {
       notes
     };
 
-    if (canMergeIntoActiveOrder) {
-      socket.emit('update-order', { orderId: activeOrder.id, ...orderData });
-    } else {
-      socket.emit('new-order', orderData);
-    }
+    socket.emit('new-order', orderData);
 
     setCart([]);
     setNotes('');
@@ -585,7 +579,7 @@ export default function ClientView({ tableId, socket }) {
               style={{ width: '100%', marginTop: '20px' }}
               onClick={submitOrder}
             >
-              {canMergeIntoActiveOrder ? 'Actualizar Pedido' : 'Confirmar y Enviar Pedido'}
+              Confirmar y Enviar Pedido
             </button>
           </div>
         </div>,

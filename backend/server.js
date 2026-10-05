@@ -389,37 +389,11 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Evento: Agregar items a un pedido existente (mientras no fue entregado/archivado)
-  socket.on('update-order', ({ orderId, items: rawItems, notes, paymentMethod }) => {
-    const order = orders.find(o => o.id === orderId);
-    if (!order || order.archived) return;
-
-    // Combinar items
-    const items = sanitizeItems(rawItems);
-    items.forEach(newItem => {
-      const existingItem = order.items.find(i => i.productId === newItem.productId);
-      if (existingItem) {
-        existingItem.quantity += newItem.quantity;
-      } else {
-        order.items.push(newItem);
-      }
-    });
-    if (notes) order.notes = notes;
-
-    recomputeTableTotal(order.tableId);
-    const table = findTable(order.tableId);
-    if (table && paymentMethod) table.paymentMethod = paymentMethod;
-
-    runInTransaction(() => {
-      persistOrder(order);
-      if (table) persistTable(table);
-    });
-
-    broadcastOrders();
-    broadcastTables();
-    io.to(`table-${order.tableId}`).emit('order-status-changed', order);
-  });
-  // Evento: Nuevo pedido
+  // Evento: Nuevo pedido. Es la única forma en que el cliente manda items a cocina:
+  // un pedido enviado no se modifica desde la mesa, cada ronda es una comanda nueva
+  // (antes existía update-order, que mezclaba items en un pedido que cocina podía
+  // tener ya en preparación o listo, y esos items nuevos nunca se preparaban).
+  // Las correcciones de un pedido quedan del lado del Mostrador (edit-order/cancel-order).
   socket.on('new-order', (orderData) => {
     // El tableId puede llegar como número o string según cómo navegó el cliente en el frontend;
     // se normaliza a string porque tables[].id siempre es string.
