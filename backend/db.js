@@ -26,7 +26,12 @@ db.exec(`
     payment_method   TEXT,
     total            REAL NOT NULL DEFAULT 0,
     -- Secreto del QR de la mesa: sin él no se puede unir a la mesa ni pedir a su nombre.
-    qr_token         TEXT
+    qr_token         TEXT,
+    -- Mesa habilitada para pedidos (el Mostrador la abre al iniciar el día o una por una).
+    -- Una mesa bloqueada siempre está vacía: si tenía clientes, queda marcada con
+    -- block_on_close y se bloquea recién cuando se cobra.
+    enabled          INTEGER NOT NULL DEFAULT 0,
+    block_on_close   INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS orders (
@@ -89,18 +94,27 @@ const tableColumns = db.prepare('PRAGMA table_info(tables)').all().map(col => co
 if (!tableColumns.includes('qr_token')) {
   db.exec('ALTER TABLE tables ADD COLUMN qr_token TEXT');
 }
+// Las mesas de una base vieja arrancan bloqueadas: se habilitan con "Iniciar día".
+if (!tableColumns.includes('enabled')) {
+  db.exec('ALTER TABLE tables ADD COLUMN enabled INTEGER NOT NULL DEFAULT 0');
+}
+if (!tableColumns.includes('block_on_close')) {
+  db.exec('ALTER TABLE tables ADD COLUMN block_on_close INTEGER NOT NULL DEFAULT 0');
+}
 
 // --- PREPARED STATEMENTS ---
 
 const upsertTableStmt = db.prepare(`
-  INSERT INTO tables (id, status, current_order_id, payment_method, total, qr_token)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO tables (id, status, current_order_id, payment_method, total, qr_token, enabled, block_on_close)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     status = excluded.status,
     current_order_id = excluded.current_order_id,
     payment_method = excluded.payment_method,
     total = excluded.total,
-    qr_token = excluded.qr_token
+    qr_token = excluded.qr_token,
+    enabled = excluded.enabled,
+    block_on_close = excluded.block_on_close
 `);
 
 const upsertOrderStmt = db.prepare(`
@@ -148,7 +162,9 @@ const rowToTable = (row) => ({
   currentOrderId: row.current_order_id,
   paymentMethod: row.payment_method,
   total: row.total,
-  qrToken: row.qr_token
+  qrToken: row.qr_token,
+  enabled: Boolean(row.enabled),
+  blockOnClose: Boolean(row.block_on_close)
 });
 
 const rowToMenuItem = (row) => ({
@@ -188,7 +204,8 @@ export const runInTransaction = (fn) => {
 };
 
 export const persistTable = (table) => {
-  upsertTableStmt.run(table.id, table.status, table.currentOrderId, table.paymentMethod, table.total, table.qrToken || null);
+  upsertTableStmt.run(table.id, table.status, table.currentOrderId, table.paymentMethod, table.total, table.qrToken || null,
+    table.enabled ? 1 : 0, table.blockOnClose ? 1 : 0);
 };
 
 export const persistOrder = (order) => {

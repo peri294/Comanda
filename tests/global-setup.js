@@ -1,11 +1,32 @@
+import { io } from 'socket.io-client';
+
+const BACKEND = 'http://localhost:3001';
+
 // Corre una sola vez antes de toda la suite (no por test) para no generar la misma
 // condición de carrera que se busca evitar: si el reset corriera en el beforeEach de
 // cada test, dos tests en paralelo podrían pisarse el pedido a mitad de camino.
 export default async function globalSetup() {
-  const res = await fetch('http://localhost:3001/api/test/reset', { method: 'POST' });
+  const res = await fetch(`${BACKEND}/api/test/reset`, { method: 'POST' });
   if (!res.ok) {
     throw new Error(
       `No se pudo resetear el backend antes de los tests (¿está corriendo en :3001?). Status: ${res.status}`
     );
+  }
+
+  // Las mesas nacen bloqueadas: se inicia el día como lo haría el Mostrador.
+  const { token } = await (await fetch(`${BACKEND}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'counter', password: 'mostrador123' })
+  })).json();
+  const socket = io(BACKEND, { transports: ['websocket'] });
+  await new Promise(resolve => socket.on('connect', resolve));
+  const started = new Promise(resolve => socket.once('tables-updated', resolve));
+  socket.emit('join', { role: 'counter', token });
+  socket.emit('start-day');
+  const tables = await started;
+  socket.close();
+  if (!tables.every(t => t.enabled)) {
+    throw new Error('No se pudo iniciar el día antes de los tests');
   }
 }

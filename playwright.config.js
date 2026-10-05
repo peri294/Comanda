@@ -15,6 +15,15 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: /day-cycle\.spec\.js/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // Cerrar el día bloquea todas las mesas: correrlo en paralelo con el resto rompería
+      // a los demás specs, así que corre solo, cuando terminaron todos.
+      name: 'day-cycle',
+      testMatch: /day-cycle\.spec\.js/,
+      dependencies: ['chromium'],
       use: { ...devices['Desktop Chrome'] },
     },
   ],

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { tableClientUrl } from '../config';
 import { createAudioContext, playTone } from '../utils/sound';
@@ -299,6 +299,28 @@ export default function CounterView({ socket, token, onLogout }) {
     socket.emit('remove-table', { tableId });
   };
 
+  // --- Habilitación de mesas ---
+  // Bloquear una mesa con clientes no la corta: el server la marca y la bloquea al
+  // cobrarla, para que una mesa bloqueada nunca tenga una cuenta abierta.
+
+  const handleToggleTableEnabled = (table) => {
+    socket.emit('set-table-enabled', { tableId: table.id, enabled: !table.enabled || table.blockOnClose });
+  };
+
+  const handleStartDay = () => {
+    socket.emit('start-day');
+  };
+
+  // Cerrar el día y cerrar la caja son independientes: se ofrece hacer los dos juntos,
+  // pero se puede cerrar el día sin tocar la caja.
+  const handleEndDay = () => {
+    if (!window.confirm('¿Cerrar el día? Las mesas libres se bloquean ahora; las ocupadas se bloquean al cobrarlas.')) return;
+    socket.emit('end-day');
+    if (window.confirm(`¿Cerrar también la caja? Se registrará un cierre por $${dailySales}.`)) {
+      socket.emit('close-register');
+    }
+  };
+
   // Para cuando el link de una mesa se filtró: el server genera un token nuevo y el
   // QR anterior deja de funcionar al instante (el consumo de la mesa no se toca).
   const handleRegenerateQr = (tableId) => {
@@ -390,7 +412,7 @@ export default function CounterView({ socket, token, onLogout }) {
           <p style={{ color: 'var(--text-secondary)' }}>Gestión general de mesas, pedidos y cobros.</p>
         </div>
 
-        <div style={{ display: 'flex', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
           <div className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center', minWidth: '110px' }}>
             <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>Mesas Activas</span>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-gold)' }}>{tablesOccupied} / {tables.length}</div>
@@ -410,6 +432,22 @@ export default function CounterView({ socket, token, onLogout }) {
             title="Registrar un cierre de caja con lo cobrado hasta ahora"
           >
             <Archive size={16} /> Cerrar Caja
+          </button>
+          <button
+            className="btn-secondary"
+            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            onClick={handleStartDay}
+            title="Habilitar todas las mesas para recibir pedidos"
+          >
+            <Sun size={16} /> Iniciar Día
+          </button>
+          <button
+            className="btn-secondary"
+            style={{ padding: '10px 16px', fontSize: '0.8rem' }}
+            onClick={handleEndDay}
+            title="Bloquear todas las mesas (las ocupadas, al cobrarlas)"
+          >
+            <Moon size={16} /> Cerrar Día
           </button>
           <button
             className="btn-secondary"
@@ -449,19 +487,43 @@ export default function CounterView({ socket, token, onLogout }) {
                 <div 
                   key={table.id} 
                   className={`glass-panel table-card status-${table.status}`}
+                  style={table.enabled ? undefined : { opacity: 0.6 }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <div className="table-card-number">Mesa {table.id}</div>
                       <div className={`table-card-status status-${table.status}`}>
-                        {table.status === 'libre' && 'Libre'}
+                        {table.status === 'libre' && (table.enabled ? 'Libre' : 'Bloqueada')}
                         {table.status === 'pedido_pendiente' && 'Pedido Recibido'}
                         {table.status === 'comiendo' && 'Consumiendo'}
                         {table.status === 'esperando_cuenta' && 'Espera Efectivo'}
                         {table.status === 'pagando_tarjeta' && 'Espera Tarjeta'}
                       </div>
+                      {table.blockOnClose && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--warning)', marginTop: '2px' }}>
+                          Se bloquea al cobrar
+                        </div>
+                      )}
                     </div>
                     <div style={{ display: 'flex', gap: '6px' }}>
+                      {(() => {
+                        // Bloqueada o con bloqueo pendiente: el botón la (re)habilita
+                        const willEnable = !table.enabled || table.blockOnClose;
+                        const label = willEnable
+                          ? `Habilitar Mesa ${table.id}`
+                          : table.status === 'libre' ? `Bloquear Mesa ${table.id}` : `Bloquear Mesa ${table.id} al cobrar`;
+                        return (
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                            onClick={() => handleToggleTableEnabled(table)}
+                            title={label}
+                            aria-label={label}
+                          >
+                            {willEnable ? <LockOpen size={12} /> : <Lock size={12} />}
+                          </button>
+                        );
+                      })()}
                       <a
                         href={tableClientUrl(table.id, table.qrToken)}
                         target="_blank"

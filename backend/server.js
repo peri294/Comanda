@@ -74,7 +74,12 @@ const createTable = (id) => ({
   currentOrderId: null,
   paymentMethod: null,
   total: 0,
-  qrToken: newQrToken()
+  qrToken: newQrToken(),
+  // Toda mesa nace bloqueada: recibe pedidos recién cuando el Mostrador la habilita
+  // (al iniciar el día o una por una). Fuera del horario, un link filtrado no sirve.
+  enabled: false,
+  // Bloqueo pedido con clientes sentados: se aplica al cobrar la mesa (ver applyEnabled).
+  blockOnClose: false
 });
 
 // Semilla del primer arranque: 12 mesas libres. Es una función y no una constante
@@ -225,17 +230,19 @@ const ASSISTANCE_REOPEN_COOLDOWN_MS = 10_000;
 const findTable = (tableId) => tables.find(t => t.id === tableId);
 
 // Mesa a la que está atada esta conexión (por un join con token válido), o null.
-// Se revalida contra el token actual: si la mesa se dio de baja o su QR se regeneró,
-// la conexión pierde el acceso aunque siga abierta.
+// Se revalida contra el token actual y contra la sala: si la mesa se dio de baja, su QR
+// se regeneró o se cobró (kickTableClients), la conexión pierde el acceso aunque siga
+// abierta, y para volver a pedir tiene que unirse de nuevo.
 const getSocketTable = (socket) => {
   const bound = socket.data.table;
-  if (!bound) return null;
+  if (!bound || !socket.rooms.has(`table-${bound.id}`)) return null;
   const table = findTable(bound.id);
   return table && table.qrToken === bound.token ? table : null;
 };
 
-// Saca de la sala de la mesa a todas las conexiones atadas a ella (baja de la mesa o
-// QR regenerado), así dejan de recibir sus pedidos y estado.
+// Saca de la sala de la mesa a todas las conexiones atadas a ella (baja de la mesa, QR
+// regenerado o mesa cobrada), así dejan de recibir sus pedidos y estado y, por
+// getSocketTable, tampoco pueden actuar sobre la mesa.
 const kickTableClients = (tableId) => io.in(`table-${tableId}`).socketsLeave(`table-${tableId}`);
 const getMenuItem = (productId) => menuCache.find(m => m.id === productId);
 
@@ -327,6 +334,13 @@ const recomputeTableTotal = (tableId) => {
     table.status = 'libre';
     table.currentOrderId = null;
     table.paymentMethod = null;
+    // Si la mesa tenía el bloqueo pendiente (se cerró el día o el mostrador la bloqueó
+    // con clientes), se aplica ahora: quedó vacía y no hay nada que cobrar para que
+    // close-table lo haga.
+    if (table.blockOnClose) {
+      table.enabled = false;
+      table.blockOnClose = false;
+    }
   } else if (table.currentOrderId && !activeOrders.find(o => o.id === table.currentOrderId)) {
     // El pedido "actual" de la mesa se canceló, pero quedan otros: apuntar al más reciente.
     table.currentOrderId = activeOrders[activeOrders.length - 1].id;
@@ -346,6 +360,35 @@ const broadcastOrders = () => {
 };
 
 const broadcastTables = () => io.to('counter').emit('tables-updated', tables);
+
+const isTableEmpty = (table) =>
+  table.status === 'libre' && !orders.some(o => o.tableId === table.id && !o.archived);
+
+// Una mesa bloqueada siempre está vacía: si no, el próximo que escaneara el QR al
+// habilitarla vería la cuenta de los clientes anteriores. Por eso bloquear una mesa
+// con clientes no la bloquea en el acto: la marca (blockOnClose) y se bloquea cuando
+// se cobra. Habilitar una mesa marcada cancela el bloqueo pendiente.
+// Devuelve si la mesa cambió.
+const applyEnabled = (table, enabled) => {
+  let next;
+  if (enabled) next = { enabled: true, blockOnClose: false };
+  else if (isTableEmpty(table)) next = { enabled: false, blockOnClose: false };
+  else next = { enabled: table.enabled, blockOnClose: true };
+
+  if (next.enabled === table.enabled && next.blockOnClose === table.blockOnClose) return false;
+  Object.assign(table, next);
+  return true;
+};
+
+// Habilita o bloquea un grupo de mesas, persiste solo las que cambian y avisa al
+// mostrador y a cada mesa afectada (el cliente muestra u oculta el menú en vivo).
+const setTablesEnabled = (targets, enabled) => {
+  const changed = targets.filter(t => applyEnabled(t, enabled));
+  if (changed.length === 0) return;
+  runInTransaction(() => changed.forEach(persistTable));
+  broadcastTables();
+  changed.forEach(t => io.to(`table-${t.id}`).emit('table-state', t));
+};
 
 // --- ENDPOINTS HTTP ---
 
@@ -479,7 +522,7 @@ io.on('connection', (socket) => {
     // la mesa 3 podía pedir a nombre de la 7. También cubre las mesas dadas de baja: un
     // QR viejo no puede generar pedidos huérfanos que cocina prepararía para nadie.
     const table = getSocketTable(socket);
-    if (!table) return;
+    if (!table || !table.enabled) return;
     const tableId = table.id;
 
     const { notes, paymentMethod } = orderData;
@@ -587,6 +630,8 @@ io.on('connection', (socket) => {
     broadcastOrders();
     broadcastTables();
     io.to(`table-${order.tableId}`).emit('order-status-changed', order);
+    // El total y el estado de la mesa cambiaron (y puede haber quedado bloqueada).
+    io.to(`table-${order.tableId}`).emit('table-state', findTable(order.tableId));
     // Alerta aparte para cocina: el pedido ya estaba en su pantalla y cambió.
     io.to('kitchen').emit('order-modified', { order, reason: order.archived ? 'cancelled' : 'edited' });
   });
@@ -611,6 +656,8 @@ io.on('connection', (socket) => {
     broadcastOrders();
     broadcastTables();
     io.to(`table-${order.tableId}`).emit('order-status-changed', order);
+    // El total y el estado de la mesa cambiaron (y puede haber quedado bloqueada).
+    io.to(`table-${order.tableId}`).emit('table-state', findTable(order.tableId));
     io.to('kitchen').emit('order-modified', { order, reason: 'cancelled' });
   });
 
@@ -643,6 +690,9 @@ io.on('connection', (socket) => {
   socket.on('request-assistance', () => {
     const table = getSocketTable(socket);
     if (!table) return;
+    // Con la mesa bloqueada (siempre vacía) un link filtrado no sirve para llamar al
+    // mozo con el local cerrado. request-bill no lo necesita: ya exige la mesa en "comiendo".
+    if (!table.enabled) return;
     const tableId = table.id;
 
     const existing = activeAssistanceRequests.get(tableId);
@@ -756,6 +806,34 @@ io.on('connection', (socket) => {
     kickTableClients(table.id);
   });
 
+  // --- HABILITACIÓN DE MESAS (desde Mostrador) ---
+  // Una mesa bloqueada no acepta pedidos ni llamados al mozo. El inicio y el cierre del
+  // día cambian todas las mesas a la vez; en el medio, cada mesa se maneja por separado.
+  // Las mesas con clientes se bloquean recién al cobrarlas (ver applyEnabled).
+
+  // Evento: Habilitar o bloquear una mesa puntual
+  socket.on('set-table-enabled', ({ tableId: rawTableId, enabled } = {}) => {
+    if (!socket.data.roles?.has('counter')) return;
+    if (typeof enabled !== 'boolean') return;
+    const table = findTable(String(rawTableId));
+    if (!table) return;
+    setTablesEnabled([table], enabled);
+  });
+
+  // Evento: Iniciar el día (habilita todas las mesas)
+  socket.on('start-day', () => {
+    if (!socket.data.roles?.has('counter')) return;
+    setTablesEnabled(tables, true);
+  });
+
+  // Evento: Cerrar el día. Bloquea las mesas vacías en el acto y marca las ocupadas para
+  // bloquearse al cobrarlas, así no hace falta cobrar todo para cerrar. Independiente
+  // del cierre de caja: el Mostrador puede hacer los dos juntos, pero no es obligatorio.
+  socket.on('end-day', () => {
+    if (!socket.data.roles?.has('counter')) return;
+    setTablesEnabled(tables, false);
+  });
+
   // Evento: Confirmar cobro y liberar mesa (desde Mostrador/Caja)
   socket.on('close-table', ({ tableId: rawTableId }) => {
     if (!socket.data.roles?.has('counter')) return;
@@ -778,14 +856,18 @@ io.on('connection', (socket) => {
       });
 
       // Resetear mesa a valores iniciales. El token se conserva: el QR impreso en la
-      // mesa tiene que seguir sirviendo para los próximos clientes.
+      // mesa tiene que seguir sirviendo para los próximos clientes. Si el Mostrador
+      // pidió bloquearla mientras tenía clientes (o se cerró el día), se bloquea ahora.
+      const previous = tables[tableIndex];
       tables[tableIndex] = {
         id: tableId,
         status: 'libre',
         currentOrderId: null,
         paymentMethod: null,
         total: 0,
-        qrToken: tables[tableIndex].qrToken
+        qrToken: previous.qrToken,
+        enabled: previous.enabled && !previous.blockOnClose,
+        blockOnClose: false
       };
       activeAssistanceRequests.delete(tableId);
 
@@ -801,8 +883,11 @@ io.on('connection', (socket) => {
       // El server es la única fuente de la caja: todos los mostradores conectados
       // reciben el total real (dos pestañas abiertas no divergen por sumas locales).
       io.to('counter').emit('daily-sales-updated', getDailySalesTotal());
+      // La visita terminó: se desconecta de la mesa a todos sus celulares. Si no, el que
+      // deja la página abierta seguiría viendo en vivo los pedidos del grupo siguiente.
+      // Para volver a pedir hay que escanear el QR de nuevo.
       io.to(`table-${tableId}`).emit('table-closed');
-      io.to(`table-${tableId}`).emit('table-state', tables[tableIndex]);
+      kickTableClients(tableId);
     }
   });
 

@@ -20,6 +20,11 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   await counterPage.getByRole('button', { name: /agregar mesa/i }).click();
   await expect(mesa13).toBeVisible({ timeout: 10000 });
 
+  // La mesa nueva nace bloqueada: su QR no deja pedir hasta que el mostrador la habilita
+  await expect(mesa13.getByText('Bloqueada')).toBeVisible();
+  await mesa13.getByRole('button', { name: 'Habilitar Mesa 13' }).click();
+  await expect(mesa13.getByText('Libre')).toBeVisible({ timeout: 10000 });
+
   // 2. PEDIR DESDE LA MESA NUEVA, con el link del QR que muestra el mostrador
   const qrLink = await mesa13.getByRole('link', { name: 'QR de la Mesa 13' }).getAttribute('href');
   expect(qrLink).toMatch(/[?&]t=/);
@@ -40,6 +45,8 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   await mesa13.getByRole('button', { name: /detalles/i }).click();
   await counterPage.getByRole('button', { name: /confirmar cobro y cerrar mesa/i }).click();
   await expect(mesa13.getByText('Mesa vacía')).toBeVisible({ timeout: 10000 });
+  // Al cobrar, el server desconecta los celulares de la mesa: la visita terminó
+  await expect(clientPage.getByText('¡Gracias por tu visita!')).toBeVisible({ timeout: 10000 });
 
   // 5. LA CAJA DEL DÍA REFLEJA EL COBRO Y SOBREVIVE A UNA RECARGA
   // (este es el único test de la suite que cierra mesas, así que el valor es exacto)
@@ -59,6 +66,10 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   // El cierre también persiste: tras recargar, la caja sigue en $0 (no vuelve a $1800)
   await counterPage.reload();
   await expect(cajaPanel.getByText('$0')).toBeVisible({ timeout: 15000 });
+
+  // El cliente vuelve a escanear el QR: la mesa sigue habilitada, así que entra de nuevo
+  await clientPage.reload();
+  await expect(clientPage.getByText('Nuestro Menú')).toBeVisible({ timeout: 15000 });
 
   // 7. DAR DE BAJA LA MESA
   counterPage.once('dialog', dialog => dialog.accept());

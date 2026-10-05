@@ -46,6 +46,10 @@ export default function ClientView({ tableId, qrToken, socket }) {
   // de dejar pedir a una mesa fantasma.
   const [tableUnavailable, setTableUnavailable] = useState(false);
 
+  // El Mostrador cobró la mesa: el server desconecta a todos sus celulares y la visita
+  // termina. Para volver a pedir hay que escanear el QR de nuevo (recargar la página).
+  const [visitEnded, setVisitEnded] = useState(false);
+
   // Sincroniza catálogo y carrito con un menú nuevo (del fetch inicial, de un
   // menu-updated en vivo o del re-fetch tras reconectar): los items borrados o
   // agotados se sacan del carrito y los precios editados se actualizan, para no
@@ -97,7 +101,9 @@ export default function ClientView({ tableId, qrToken, socket }) {
   }, [activeCategory, menu]);
 
   // El token del QR viaja en el join: el server ata esta conexión a la mesa solo si es válido.
-  useSocketRoom(socket, tableId ? `table-${tableId}` : null, qrToken);
+  // Con la visita terminada no se vuelve a unir, ni siquiera al reconectar el socket: si
+  // no, un celular olvidado vería los pedidos del grupo siguiente tras un corte de red.
+  useSocketRoom(socket, tableId && !visitEnded ? `table-${tableId}` : null, qrToken);
 
   // Socket Connection and Event Listeners
   useEffect(() => {
@@ -131,14 +137,9 @@ export default function ClientView({ tableId, qrToken, socket }) {
       setCart([]);
       setOrders({});
       setNotes('');
+      setIsCartOpen(false);
       setAssistanceRequested(false);
-      setTableState({
-        id: tableId,
-        status: 'libre',
-        currentOrderId: null,
-        paymentMethod: null,
-        total: 0
-      });
+      setVisitEnded(true);
     });
 
     socket.on('assistance-resolved', () => {
@@ -267,6 +268,36 @@ export default function ClientView({ tableId, qrToken, socket }) {
           <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>Esta mesa no está disponible</h2>
           <p style={{ color: 'var(--text-secondary)' }}>
             El QR de la mesa {tableId} no es válido o la mesa fue dada de baja. Por favor escaneá de nuevo el QR de tu mesa o consultá al personal de la cafetería.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (visitEnded) {
+    return (
+      <div className="animate-fade-in" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+        <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', maxWidth: '420px' }}>
+          <CheckCircle size={48} style={{ color: 'var(--success)', margin: '0 auto 16px auto' }} />
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>¡Gracias por tu visita!</h2>
+          <p style={{ color: 'var(--text-secondary)' }}>
+            La cuenta de la mesa {tableId} ya está cerrada. Si querés volver a pedir, escaneá de nuevo el QR de la mesa.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Mesa bloqueada por el Mostrador (antes de iniciar el día, después de cerrarlo o una
+  // mesa puntual). Una mesa bloqueada siempre está vacía, así que no hay cuenta que mostrar.
+  if (tableState.enabled === false) {
+    return (
+      <div className="animate-fade-in" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+        <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', maxWidth: '420px' }}>
+          <Coffee size={48} style={{ color: 'var(--text-muted)', margin: '0 auto 16px auto' }} />
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>Mesa no habilitada</h2>
+          <p style={{ color: 'var(--text-secondary)' }}>
+            La mesa {tableId} todavía no está habilitada para pedir. Por favor consultá al personal de la cafetería.
           </p>
         </div>
       </div>

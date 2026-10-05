@@ -41,9 +41,11 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 300));
 // Las 12 mesas semilla y la 13 (tables.spec) ya tienen dueño entre los specs que corren
 // en paralelo: estos tests crean las suyas con número puntual (30 en adelante: con 2x,
 // 5x o 6x chocarían con locators por substring como hasText: 'Mesa 2').
+// Las mesas nuevas nacen bloqueadas: se agregan y se habilitan.
 const addTable = async (counter, id) => {
   counter.socket.emit('add-table', { id });
-  await expect.poll(async () => (await fetchState(counter.token)).tables.some(t => t.id === id)).toBe(true);
+  counter.socket.emit('set-table-enabled', { tableId: id, enabled: true });
+  await expect.poll(async () => (await fetchState(counter.token)).tables.find(t => t.id === id)?.enabled).toBe(true);
 };
 
 test('sin el token del QR no se entra a la mesa, y una mesa no puede actuar sobre otra', async () => {
@@ -111,9 +113,18 @@ test('regenerar el QR corta al token viejo; cerrar la mesa lo conserva', async (
   client.emit('new-order', { items: [{ productId: 'm1', quantity: 1 }] });
   const order = await created;
   counter.socket.emit('cancel-order', { orderId: order.id });
+  const closed = new Promise(resolve => client.once('table-closed', resolve));
   counter.socket.emit('close-table', { tableId: '32' });
-  await settle();
+  await closed;
   expect(await tableToken('32')).toBe(oldToken);
+
+  // Al cerrar la mesa, el server desconecta a sus celulares: ese socket ya no puede pedir
+  // (si no, un celular olvidado seguiría actuando sobre la mesa del grupo siguiente)
+  client.emit('new-order', { items: [{ productId: 'm1', quantity: 1 }] });
+  await settle();
+  expect((await fetchState(counter.token)).tables.find(t => t.id === '32').status).toBe('libre');
+  // Volver a escanear el QR (mismo token) lo deja entrar de nuevo
+  expect((await joinWith(client, '32', oldToken)).id).toBe('32');
 
   // Regenerar: quien está conectado con el token viejo recibe el aviso y pierde el acceso
   const removed = new Promise(resolve => client.once('table-removed', resolve));
@@ -130,6 +141,70 @@ test('regenerar el QR corta al token viejo; cerrar la mesa lo conserva', async (
   // El token viejo ya no entra; el nuevo sí
   expect(await joinWith(client, '32', oldToken)).toBeNull();
   expect((await joinWith(client, '32', newToken)).id).toBe('32');
+
+  client.close();
+  counter.socket.close();
+});
+
+test('una mesa bloqueada siempre está vacía: con clientes, se bloquea recién al cerrarla', async () => {
+  const counter = await connectCounter();
+  await addTable(counter, '33');
+  const tableOf = async () => (await fetchState(counter.token)).tables.find(t => t.id === '33');
+  const assistanceCalls = [];
+  counter.socket.on('assistance-requested', data => { if (data.tableId === '33') assistanceCalls.push(data); });
+
+  const client = await connect();
+  await joinTable(client, '33');
+  const placeOrder = async (productId) => {
+    const created = new Promise(resolve => {
+      const onChange = (order) => {
+        if (order.status === 'pendiente' && order.items.some(i => i.productId === productId)) {
+          client.off('order-status-changed', onChange);
+          resolve(order);
+        }
+      };
+      client.on('order-status-changed', onChange);
+    });
+    client.emit('new-order', { items: [{ productId, quantity: 1 }] });
+    return created;
+  };
+  const order1 = await placeOrder('m1');
+
+  // Bloquear con clientes sentados: queda habilitada y marcada, y puede seguir pidiendo
+  counter.socket.emit('set-table-enabled', { tableId: '33', enabled: false });
+  await settle();
+  let table = await tableOf();
+  expect(table.enabled).toBe(true);
+  expect(table.blockOnClose).toBe(true);
+  const order2 = await placeOrder('m8');
+
+  // Cancelar todo deja la mesa vacía: el bloqueo pendiente se aplica en ese momento.
+  // (Se cancela en vez de cobrar para no sumar a la Caja del Día, que tables.spec
+  // verifica con el monto exacto.)
+  const blocked = new Promise(resolve => client.on('table-state', state => { if (state && !state.enabled) resolve(state); }));
+  counter.socket.emit('cancel-order', { orderId: order1.id });
+  counter.socket.emit('cancel-order', { orderId: order2.id });
+  await blocked;
+  table = await tableOf();
+  expect(table.enabled).toBe(false);
+  expect(table.blockOnClose).toBe(false);
+  expect(table.status).toBe('libre');
+
+  // Bloqueada: no acepta pedidos ni llamados al mozo
+  client.emit('new-order', { items: [{ productId: 'm1', quantity: 1 }] });
+  client.emit('request-assistance');
+  await settle();
+  expect((await tableOf()).status).toBe('libre');
+  expect(assistanceCalls).toEqual([]);
+
+  // Habilitarla de nuevo deja pedir
+  const enabled = new Promise(resolve => client.on('table-state', state => { if (state?.enabled) resolve(state); }));
+  counter.socket.emit('set-table-enabled', { tableId: '33', enabled: true });
+  await enabled;
+  await placeOrder('m1');
+
+  // (El bloqueo al cobrar con close-table lo cubre day-cycle.spec, que corre después de
+  // tables.spec y puede sumar a la caja.)
 
   client.close();
   counter.socket.close();
