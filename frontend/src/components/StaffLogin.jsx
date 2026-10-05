@@ -6,7 +6,7 @@ const ROLE_META = {
   counter: { label: 'Mostrador', icon: Monitor }
 };
 
-export default function StaffLogin({ role, onLogin, error, loading }) {
+export default function StaffLogin({ role, onLogin, error, loading, demoPassword }) {
   const [password, setPassword] = useState('');
   const meta = ROLE_META[role] || { label: role, icon: Lock };
   const Icon = meta.icon;
@@ -24,6 +24,11 @@ export default function StaffLogin({ role, onLogin, error, loading }) {
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '20px' }}>
           Ingresá la contraseña del personal para continuar.
         </p>
+        {demoPassword && (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '16px' }}>
+            Demo: la contraseña es <strong>{demoPassword}</strong>
+          </p>
+        )}
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <input
             type="password"

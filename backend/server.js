@@ -3,6 +3,9 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import crypto from 'crypto';
+import path from 'path';
+import { existsSync } from 'fs';
+import { fileURLToPath } from 'url';
 import {
   loadState,
   persistTable,
@@ -18,18 +21,32 @@ import {
   closeRegister
 } from './db.js';
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+// Demo pública del portfolio: expone los links de las mesas y las contraseñas en el
+// portal, y vuelve el estado a fábrica cuando nadie la usa (ver DEMO_IDLE_MINUTES).
+const DEMO_MODE = process.env.DEMO_MODE === '1';
 
 // --- AUTENTICACION DE PERSONAL ---
 // Password compartida por rol (cocina/mostrador), pensada para una tablet compartida
-// por todo el turno, no para trazabilidad por empleado. Sobreescribible por variable
-// de entorno para no dejar las credenciales de demo en un despliegue real.
+// por todo el turno, no para trazabilidad por empleado. En producción (fuera del modo
+// demo) es obligatorio definirlas: no se arranca con las credenciales de demo.
+if (IS_PRODUCTION && !DEMO_MODE && (!process.env.KITCHEN_PASSWORD || !process.env.COUNTER_PASSWORD)) {
+  console.error('Faltan KITCHEN_PASSWORD y/o COUNTER_PASSWORD (obligatorias con NODE_ENV=production, salvo DEMO_MODE=1).');
+  process.exit(1);
+}
 const ROLE_PASSWORDS = {
   kitchen: process.env.KITCHEN_PASSWORD || 'cocina123',
   counter: process.env.COUNTER_PASSWORD || 'mostrador123'
 };
+
+// CORS: en desarrollo el frontend de Vite (:5173) le habla al backend (:3001) desde
+// cualquier IP de la red local. En producción el backend sirve el frontend en el mismo
+// origen y no hace falta; CORS_ORIGIN lo habilita si el frontend vive en otro dominio.
+const CORS_ORIGIN = process.env.CORS_ORIGIN || (IS_PRODUCTION ? null : '*');
+
+const app = express();
+if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN }));
+app.use(express.json());
 
 // Tokens de sesión válidos por rol. Se quedan en memoria a propósito (a diferencia
 // de mesas/pedidos, que se persisten en SQLite): son sesiones de tablet de turno,
@@ -53,12 +70,12 @@ const requireStaffAuth = (req, res, next) => {
 };
 
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
+const io = new Server(httpServer, CORS_ORIGIN ? {
   cors: {
-    origin: '*',
+    origin: CORS_ORIGIN,
     methods: ['GET', 'POST']
   }
-});
+} : {});
 
 // --- ESTADO DE TRABAJO (en memoria, respaldado por SQLite) ---
 
@@ -441,28 +458,67 @@ app.get('/api/initial-state', requireStaffAuth, (req, res) => {
   });
 });
 
-// Solo para los tests E2E: vuelve el estado (memoria y SQLite, incluido el historial
-// de pedidos archivados) a como queda un primer arranque: mesas libres, sin pedidos
-// ni llamados de asistencia. No toca las sesiones de personal logueadas. No existe
-// si NODE_ENV=production, para no exponerlo en un despliegue real.
-if (process.env.NODE_ENV !== 'production') {
+// Vuelve el estado (memoria y SQLite, incluido el historial de pedidos archivados) a
+// como queda un primer arranque: mesas libres, sin pedidos ni llamados de asistencia y
+// el menú de fábrica. No toca las sesiones de personal logueadas.
+// keepQrTokens: las mesas conservan su token, así las pestañas abiertas siguen valiendo
+// (el reset de la demo); si no, cada mesa nace con uno nuevo (el de los tests).
+// enableTables: las mesas arrancan habilitadas en vez de bloqueadas.
+const resetToSeed = ({ keepQrTokens = false, enableTables = false } = {}) => {
+  const previousTokens = new Map(tables.map(t => [t.id, t.qrToken]));
+  tables = initialTables();
+  tables.forEach(t => {
+    if (keepQrTokens && previousTokens.has(t.id)) t.qrToken = previousTokens.get(t.id);
+    t.enabled = enableTables;
+  });
+  orders = [];
+  menuCache = JSON.parse(JSON.stringify(DEFAULT_MENU));
+  activeAssistanceRequests.clear();
+  resetState(tables, DEFAULT_MENU);
+};
+
+// Solo para los tests E2E. No existe si NODE_ENV=production, para no exponerlo en un
+// despliegue real (ni en la demo pública).
+if (!IS_PRODUCTION) {
   app.post('/api/test/reset', (req, res) => {
     // Las conexiones atadas a mesas viejas pierden el acceso: cada reset genera tokens nuevos.
-    tables = initialTables();
-    orders = [];
     // El menú también vuelve a la semilla: los specs de menú crean/borran productos
     // y los demás specs piden los productos por nombre esperando sus precios de fábrica.
-    menuCache = JSON.parse(JSON.stringify(DEFAULT_MENU));
-    activeAssistanceRequests.clear();
-    resetState(tables, DEFAULT_MENU);
+    resetToSeed();
     res.json({ ok: true });
   });
+}
 
-  // Links con token de cada mesa para el simulador de QR del portal y para los tests
-  // E2E. Expone los tokens sin login, por eso tampoco existe en producción: ahí los
-  // links salen solo del Mostrador.
+// Links con token de cada mesa para el simulador de QR del portal y para los tests
+// E2E. Expone los tokens sin login, por eso en producción solo existe en la demo:
+// en un despliegue real los links salen solo del Mostrador.
+if (!IS_PRODUCTION || DEMO_MODE) {
   app.get('/api/demo/table-links', (req, res) => {
     res.json(tables.map(t => ({ id: t.id, qrToken: t.qrToken })));
+  });
+}
+
+// --- MODO DEMO ---
+// La demo es pública y compartida: cualquiera puede borrar el menú o bloquear las mesas.
+// Para que el próximo visitante la encuentre entera, se vuelve a fábrica (con las mesas
+// habilitadas) cuando pasaron DEMO_IDLE_MINUTES sin actividad. Se espera a que esté
+// inactiva para no recargarle la pantalla a alguien en medio de una prueba.
+const DEMO_IDLE_MINUTES = Number(process.env.DEMO_IDLE_MINUTES) || 30;
+let lastDemoActivityAt = 0;
+let lastDemoResetAt = 0;
+const markDemoActivity = () => { lastDemoActivityAt = Date.now(); };
+
+const resetDemo = () => {
+  resetToSeed({ keepQrTokens: true, enableTables: true });
+  lastDemoResetAt = Date.now();
+  // Las pantallas abiertas se recargan para tomar el estado nuevo de una vez.
+  io.emit('demo-reset');
+  console.log('Demo reiniciada al estado de fábrica');
+};
+
+if (DEMO_MODE) {
+  app.get('/api/demo/info', (req, res) => {
+    res.json({ credentials: ROLE_PASSWORDS, idleResetMinutes: DEMO_IDLE_MINUTES });
   });
 }
 
@@ -470,6 +526,9 @@ if (process.env.NODE_ENV !== 'production') {
 
 io.on('connection', (socket) => {
   console.log(`Cliente conectado: ${socket.id}`);
+
+  // Cualquier acción (no el join, que es solo mirar) cuenta como actividad de la demo.
+  if (DEMO_MODE) socket.onAny((event) => { if (event !== 'join') markDemoActivity(); });
 
   // Evento de personal: se ignora si esta conexión no se unió con ese rol (join con token).
   const staffOn = (role, event, handler) =>
@@ -922,6 +981,20 @@ io.on('connection', (socket) => {
     console.log(`Cliente desconectado: ${socket.id}`);
   });
 });
+
+// El build del frontend (npm run build) se sirve desde el mismo server: en producción
+// queda todo en un solo servicio y un solo origen. En desarrollo lo sirve Vite.
+const FRONTEND_DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'frontend', 'dist');
+if (existsSync(FRONTEND_DIST)) app.use(express.static(FRONTEND_DIST));
+
+if (DEMO_MODE) {
+  // Cada visitante llega a una demo limpia y con las mesas habilitadas.
+  resetDemo();
+  setInterval(() => {
+    const idleMs = Date.now() - lastDemoActivityAt;
+    if (lastDemoActivityAt > lastDemoResetAt && idleMs > DEMO_IDLE_MINUTES * 60_000) resetDemo();
+  }, 60_000).unref();
+}
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {

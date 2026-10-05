@@ -1,5 +1,13 @@
 {
   "name": "qr-coffee-shop",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "npm ci --prefix backend --omit=dev && npm ci --prefix frontend && npm run build --prefix frontend",
+    "start": "node backend/server.js"
+  },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "socket.io-client": "^4.8.3"

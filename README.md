@@ -59,5 +59,23 @@ El sistema utiliza una arquitectura cliente-servidor eficiente:
 5. **Habilitar las mesas:** las mesas arrancan bloqueadas. En el Mostrador, "Iniciar Día" las habilita para recibir pedidos y "Cerrar Día" las vuelve a bloquear (las ocupadas, al cobrarlas).
 6. **Login de personal:** Las pantallas de Cocina y Mostrador piden una contraseña compartida por rol. Por defecto en desarrollo: `cocina123` (cocina) y `mostrador123` (mostrador). Para un despliegue real, sobreescribilas con las variables de entorno `KITCHEN_PASSWORD` y `COUNTER_PASSWORD` al levantar el backend.
 
+## ☁️ Despliegue
+
+En producción todo corre como un solo servicio: el backend sirve el build del frontend en el mismo origen. Funciona en cualquier hosting con procesos Node persistentes y WebSockets (Render, Railway, Fly.io); no en funciones serverless.
+
+```bash
+npm run build   # instala dependencias y compila el frontend
+npm start       # levanta el server (usa PORT si el hosting la define)
+```
+
+| Variable | Uso |
+| --- | --- |
+| `NODE_ENV=production` | Desactiva los endpoints de test y el CORS abierto. |
+| `KITCHEN_PASSWORD` / `COUNTER_PASSWORD` | Contraseñas del personal. Obligatorias en producción salvo en modo demo. |
+| `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica (con las mesas habilitadas) tras un rato sin uso. |
+| `DEMO_IDLE_MINUTES` | Minutos sin actividad antes de reiniciar la demo (por defecto 30). |
+| `DB_PATH` | Ruta del archivo SQLite. En modo demo puede vivir en un disco efímero. |
+| `CORS_ORIGIN` | Solo si el frontend se publica en otro dominio (junto con `VITE_BACKEND_URL` al compilarlo). |
+
 ## 📝 Licencia
 Este proyecto es parte del portfolio de desarrollo de [peri294](https://github.com/peri294).

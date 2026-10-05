@@ -16,6 +16,9 @@ export default function App() {
   // Links con token de las mesas para el simulador de QR del portal. null mientras carga
   // o si el backend no los expone (en producción no existe el endpoint de demo).
   const [demoTableLinks, setDemoTableLinks] = useState(null);
+  // Contraseñas de la demo pública ({ credentials, idleResetMinutes }). null si el
+  // backend no corre en modo demo.
+  const [demoInfo, setDemoInfo] = useState(null);
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const kitchenAuth = useStaffAuth('kitchen');
@@ -61,6 +64,9 @@ export default function App() {
       setIsConnected(false);
       console.log('Desconectado del servidor de Sockets');
     });
+
+    // La demo pública volvió a fábrica: recargar para tomar el estado nuevo de una vez.
+    newSocket.on('demo-reset', () => window.location.reload());
 
     setSocket(newSocket);
     // Referencia global para los tests E2E (simulan cortes y reconexiones de socket
@@ -115,6 +121,13 @@ export default function App() {
     setTableId(table !== null ? String(table) : null);
     setQrToken(token);
   };
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/api/demo/info`)
+      .then(res => (res.ok ? res.json() : null))
+      .catch(() => null)
+      .then(setDemoInfo);
+  }, []);
 
   // Se recargan cada vez que se vuelve al portal: el mostrador puede haber agregado,
   // quitado mesas o regenerado un QR mientras tanto.
@@ -186,7 +199,7 @@ export default function App() {
           kitchenAuth.token ? (
             <KitchenView socket={socket} token={kitchenAuth.token} onLogout={kitchenAuth.logout} />
           ) : (
-            <StaffLogin role="kitchen" onLogin={kitchenAuth.login} error={kitchenAuth.error} loading={kitchenAuth.loading} />
+            <StaffLogin role="kitchen" onLogin={kitchenAuth.login} error={kitchenAuth.error} loading={kitchenAuth.loading} demoPassword={demoInfo?.credentials.kitchen} />
           )
         )}
 
@@ -195,7 +208,7 @@ export default function App() {
           counterAuth.token ? (
             <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} />
           ) : (
-            <StaffLogin role="counter" onLogin={counterAuth.login} error={counterAuth.error} loading={counterAuth.loading} />
+            <StaffLogin role="counter" onLogin={counterAuth.login} error={counterAuth.error} loading={counterAuth.loading} demoPassword={demoInfo?.credentials.counter} />
           )
         )}
 
@@ -214,6 +227,12 @@ export default function App() {
               <p style={{ color: 'var(--text-secondary)', maxWidth: '600px', margin: '0 auto 24px auto', fontSize: '1rem', lineHeight: '1.6' }}>
                 Bienvenido al simulador interactivo. Desde aquí puedes abrir las diferentes pantallas para ver cómo interactúan en tiempo real mediante WebSockets.
               </p>
+              {demoInfo && (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', maxWidth: '600px', margin: '0 auto 24px auto' }}>
+                  Demo pública: contraseña de Mostrador <strong>{demoInfo.credentials.counter}</strong> y de Cocina <strong>{demoInfo.credentials.kitchen}</strong>.
+                  Los cambios son compartidos con otros visitantes y todo vuelve al estado inicial tras {demoInfo.idleResetMinutes} minutos sin uso.
+                </p>
+              )}
               
               <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', flexWrap: 'wrap' }}>
                 <button className="btn-primary" onClick={testChime}>

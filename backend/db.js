@@ -315,9 +315,9 @@ export const closeRegister = () => {
   return { closedAt, total, ordersCount };
 };
 
-// Solo para /api/test/reset: vuelve la base al estado de primer arranque.
-// Borra también el historial de pedidos archivados — aceptable porque el endpoint
-// no existe en producción y los tests necesitan un estado 100% limpio.
+// Solo para /api/test/reset y el reset de la demo pública: vuelve la base al estado de
+// primer arranque. Borra también el historial de pedidos archivados — aceptable porque
+// en un despliegue real (producción sin DEMO_MODE) no se llama nunca.
 export const resetState = (initialTables, defaultMenu) => {
   runInTransaction(() => {
     db.exec('DELETE FROM orders; DELETE FROM assistance_requests; DELETE FROM register_closures; DELETE FROM tables; DELETE FROM menu;');
