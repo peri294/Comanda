@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { itemsTotal } from './domain.js';
 
 const DEFAULT_DB_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data', 'cafeteria.db');
 const DB_PATH = process.env.DB_PATH || DEFAULT_DB_PATH;
@@ -283,10 +284,7 @@ const salesSince = (sinceIso) => {
     .prepare("SELECT items FROM orders WHERE archived = 1 AND status = 'entregado' AND closed_at > ?")
     .all(sinceIso);
   return {
-    total: rows.reduce(
-      (acc, row) => acc + JSON.parse(row.items).reduce((sum, item) => sum + item.price * item.quantity, 0),
-      0
-    ),
+    total: rows.reduce((acc, row) => acc + itemsTotal(JSON.parse(row.items)), 0),
     ordersCount: rows.length
   };
 };

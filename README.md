@@ -59,6 +59,11 @@ El sistema utiliza una arquitectura cliente-servidor eficiente:
 5. **Habilitar las mesas:** las mesas arrancan bloqueadas. En el Mostrador, "Iniciar Día" las habilita para recibir pedidos y "Cerrar Día" las vuelve a bloquear (las ocupadas, al cobrarlas).
 6. **Login de personal:** Las pantallas de Cocina y Mostrador piden una contraseña compartida por rol. Por defecto en desarrollo: `cocina123` (cocina) y `mostrador123` (mostrador). Para un despliegue real, sobreescribilas con las variables de entorno `KITCHEN_PASSWORD` y `COUNTER_PASSWORD` al levantar el backend.
 
+## 🧪 Tests
+
+- **Unit tests de las reglas de negocio** (`backend/domain.test.js`, con `node:test`, sin levantar nada): `npm test --prefix backend` (o `npm run test:unit` desde la raíz).
+- **E2E** (Playwright, en `tests/`): con el backend y el frontend corriendo en modo desarrollo, `npx playwright test` desde la raíz. Arrancan con `/api/test/reset`, que **borra la base**: para no perder tu estado local, levantá el backend con `DB_PATH` apuntando a una base aparte.
+
 ## ☁️ Despliegue
 
 En producción todo corre como un solo servicio: el backend sirve el build del frontend en el mismo origen. Funciona en cualquier hosting con procesos Node persistentes y WebSockets (Render, Railway, Fly.io); no en funciones serverless.
