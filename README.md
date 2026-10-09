@@ -70,8 +70,8 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 
 | Variable | Uso |
 | --- | --- |
-| `NODE_ENV=production` | Desactiva los endpoints de test y el CORS abierto. |
-| `KITCHEN_PASSWORD` / `COUNTER_PASSWORD` | Contraseñas del personal. Obligatorias en producción salvo en modo demo. |
+| `DEV_MODE=1` | Solo desarrollo (lo setea `npm run dev` vía `backend/.env.development`): habilita los endpoints de test, las contraseñas por defecto y el CORS abierto. **Nunca en un despliegue.** Sin esta variable el server arranca seguro por defecto. |
+| `KITCHEN_PASSWORD` / `COUNTER_PASSWORD` | Contraseñas del personal. Obligatorias salvo con `DEV_MODE=1` o `DEMO_MODE=1`: sin ellas el server no arranca. |
 | `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica (con las mesas habilitadas) tras un rato sin uso. |
 | `DEMO_IDLE_MINUTES` | Minutos sin actividad antes de reiniciar la demo (por defecto 30). |
 | `DB_PATH` | Ruta del archivo SQLite. En modo demo puede vivir en un disco efímero. |

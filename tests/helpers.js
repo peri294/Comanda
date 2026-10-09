@@ -1,3 +1,4 @@
+import { expect } from '@playwright/test';
 import { io } from 'socket.io-client';
 
 export const BACKEND = 'http://localhost:3001';
@@ -61,4 +62,14 @@ export const clientUrl = async (tableId) => `/?view=client&table=${tableId}&t=${
 // Une un socket crudo a la mesa con su token, como lo hace ClientView
 export const joinTable = async (socket, tableId) => {
   socket.emit('join', { role: `table-${tableId}`, token: await tableToken(tableId) });
+};
+
+// Agrega una mesa con número puntual y la habilita (las mesas nuevas nacen bloqueadas).
+// Para specs que necesitan mesas propias: las 12 semilla y la 13 ya tienen dueño entre
+// los specs que corren en paralelo. Usar 30 en adelante: con 2x, 5x o 6x chocarían con
+// locators por substring como hasText: 'Mesa 2'.
+export const addTable = async (counter, id) => {
+  counter.socket.emit('add-table', { id });
+  counter.socket.emit('set-table-enabled', { tableId: id, enabled: true });
+  await expect.poll(async () => (await fetchState(counter.token)).tables.find(t => t.id === id)?.enabled).toBe(true);
 };

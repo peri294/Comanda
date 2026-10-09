@@ -21,17 +21,21 @@ import {
   closeRegister
 } from './db.js';
 
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+// Seguro por defecto: lo que solo sirve para desarrollar (endpoints de test que borran
+// la base, contraseñas por defecto, CORS abierto) existe únicamente con DEV_MODE=1, que
+// setea `npm run dev` vía .env.development. Antes dependía de que el despliegue no se
+// olvidara de NODE_ENV=production: sin esa variable, /api/test/reset quedaba público.
+const DEV_MODE = process.env.DEV_MODE === '1';
 // Demo pública del portfolio: expone los links de las mesas y las contraseñas en el
 // portal, y vuelve el estado a fábrica cuando nadie la usa (ver DEMO_IDLE_MINUTES).
 const DEMO_MODE = process.env.DEMO_MODE === '1';
 
 // --- AUTENTICACION DE PERSONAL ---
 // Password compartida por rol (cocina/mostrador), pensada para una tablet compartida
-// por todo el turno, no para trazabilidad por empleado. En producción (fuera del modo
-// demo) es obligatorio definirlas: no se arranca con las credenciales de demo.
-if (IS_PRODUCTION && !DEMO_MODE && (!process.env.KITCHEN_PASSWORD || !process.env.COUNTER_PASSWORD)) {
-  console.error('Faltan KITCHEN_PASSWORD y/o COUNTER_PASSWORD (obligatorias con NODE_ENV=production, salvo DEMO_MODE=1).');
+// por todo el turno, no para trazabilidad por empleado. Fuera de desarrollo y del modo
+// demo es obligatorio definirlas: no se arranca con las credenciales por defecto.
+if (!DEV_MODE && !DEMO_MODE && (!process.env.KITCHEN_PASSWORD || !process.env.COUNTER_PASSWORD)) {
+  console.error('Faltan KITCHEN_PASSWORD y/o COUNTER_PASSWORD (obligatorias salvo DEV_MODE=1 o DEMO_MODE=1).');
   process.exit(1);
 }
 const ROLE_PASSWORDS = {
@@ -42,7 +46,7 @@ const ROLE_PASSWORDS = {
 // CORS: en desarrollo el frontend de Vite (:5173) le habla al backend (:3001) desde
 // cualquier IP de la red local. En producción el backend sirve el frontend en el mismo
 // origen y no hace falta; CORS_ORIGIN lo habilita si el frontend vive en otro dominio.
-const CORS_ORIGIN = process.env.CORS_ORIGIN || (IS_PRODUCTION ? null : '*');
+const CORS_ORIGIN = process.env.CORS_ORIGIN || (DEV_MODE ? '*' : null);
 
 const app = express();
 if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN }));
@@ -291,6 +295,12 @@ const sanitizeItems = (rawItems, previousItems = []) => {
   }, []);
 };
 
+// Notas del cliente para cocina: siempre un string acotado. Antes se guardaba lo que
+// llegara, y un objeto en notes tiraba abajo el render de Cocina y Mostrador (React no
+// renderiza objetos), incluso tras recargar, porque el pedido quedaba persistido.
+const MAX_NOTES_LENGTH = 300;
+const sanitizeNotes = (notes) => (typeof notes === 'string' ? notes.trim().slice(0, MAX_NOTES_LENGTH) : '');
+
 // Valida y normaliza los campos de un producto del menú que manda el mostrador.
 // Devuelve null si algo es inválido (nombre vacío, precio no positivo, categoría
 // desconocida): la validación visual del formulario no exime a la del server.
@@ -477,9 +487,9 @@ const resetToSeed = ({ keepQrTokens = false, enableTables = false } = {}) => {
   resetState(tables, DEFAULT_MENU);
 };
 
-// Solo para los tests E2E. No existe si NODE_ENV=production, para no exponerlo en un
-// despliegue real (ni en la demo pública).
-if (!IS_PRODUCTION) {
+// Solo para los tests E2E. Existe únicamente con DEV_MODE=1: borra la base sin pedir
+// login, así que no puede quedar expuesto en un despliegue real (ni en la demo pública).
+if (DEV_MODE) {
   app.post('/api/test/reset', (req, res) => {
     // Las conexiones atadas a mesas viejas pierden el acceso: cada reset genera tokens nuevos.
     // El menú también vuelve a la semilla: los specs de menú crean/borran productos
@@ -490,9 +500,9 @@ if (!IS_PRODUCTION) {
 }
 
 // Links con token de cada mesa para el simulador de QR del portal y para los tests
-// E2E. Expone los tokens sin login, por eso en producción solo existe en la demo:
+// E2E. Expone los tokens sin login, por eso solo existe en desarrollo y en la demo:
 // en un despliegue real los links salen solo del Mostrador.
-if (!IS_PRODUCTION || DEMO_MODE) {
+if (DEV_MODE || DEMO_MODE) {
   app.get('/api/demo/table-links', (req, res) => {
     res.json(tables.map(t => ({ id: t.id, qrToken: t.qrToken })));
   });
@@ -587,23 +597,28 @@ io.on('connection', (socket) => {
   // (antes existía update-order, que mezclaba items en un pedido que cocina podía
   // tener ya en preparación o listo, y esos items nuevos nunca se preparaban).
   // Las correcciones de un pedido quedan del lado del Mostrador (edit-order/cancel-order).
-  socket.on('new-order', (orderData = {}) => {
+  //
+  // Responde por acknowledgement ({ ok } o { ok: false, error }): antes un rechazo era
+  // silencioso y el cliente ya había vaciado el carrito creyendo que el pedido salió.
+  socket.on('new-order', (orderData, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
     // La mesa es la de la conexión, no el tableId del payload: antes, desde las devtools,
     // la mesa 3 podía pedir a nombre de la 7. También cubre las mesas dadas de baja: un
     // QR viejo no puede generar pedidos huérfanos que cocina prepararía para nadie.
     const table = getSocketTable(socket);
-    if (!table || !table.enabled) return;
+    if (!table) return reply({ ok: false, error: 'table_unavailable' });
+    if (!table.enabled) return reply({ ok: false, error: 'table_disabled' });
     const tableId = table.id;
 
-    const { notes, paymentMethod } = orderData;
-    const items = sanitizeItems(orderData.items);
-    if (items.length === 0) return; // nada válido para pedir (menú manipulado, cantidades inválidas, etc.)
+    const items = sanitizeItems(orderData?.items);
+    // Nada válido para pedir (menú manipulado, cantidades inválidas, todo agotado, etc.)
+    if (items.length === 0) return reply({ ok: false, error: 'no_valid_items' });
 
     const newOrder = {
-      id: `ord-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: `ord-${crypto.randomUUID()}`,
       tableId,
       items,
-      notes: notes || '',
+      notes: sanitizeNotes(orderData?.notes),
       status: 'pendiente',
       archived: false, // se marca true recién cuando se cierra/cobra la mesa (close-table)
       createdAt: new Date().toISOString()
@@ -619,13 +634,14 @@ io.on('connection', (socket) => {
     table.status = 'pedido_pendiente';
     table.currentOrderId = newOrder.id;
     table.total += itemsTotal(items);
+    // El método de pago se elige recién al pedir la cuenta (request-bill, que lo valida).
     if (billCancelled) table.paymentMethod = null;
-    if (paymentMethod) table.paymentMethod = paymentMethod;
 
     runInTransaction(() => {
       persistOrder(newOrder);
       persistTable(table);
     });
+    reply({ ok: true, orderId: newOrder.id });
 
     // Notificar a cocina, mostrador y a la mesa correspondiente
     io.to('kitchen').emit('order-received', newOrder);

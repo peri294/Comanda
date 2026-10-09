@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { tableToken, joinTable, login, connect, connectStaff, fetchState, placeOrder, settle } from './helpers.js';
+import { tableToken, joinTable, login, connect, connectStaff, fetchState, placeOrder, settle, addTable } from './helpers.js';
 
 // Respuesta del server al join de una mesa: el estado de la mesa, o null si no entró
 const joinWith = async (socket, tableId, token) => {
@@ -9,14 +9,7 @@ const joinWith = async (socket, tableId, token) => {
 };
 
 // Las 12 mesas semilla y la 13 (tables.spec) ya tienen dueño entre los specs que corren
-// en paralelo: estos tests crean las suyas con número puntual (30 en adelante: con 2x,
-// 5x o 6x chocarían con locators por substring como hasText: 'Mesa 2').
-// Las mesas nuevas nacen bloqueadas: se agregan y se habilitan.
-const addTable = async (counter, id) => {
-  counter.socket.emit('add-table', { id });
-  counter.socket.emit('set-table-enabled', { tableId: id, enabled: true });
-  await expect.poll(async () => (await fetchState(counter.token)).tables.find(t => t.id === id)?.enabled).toBe(true);
-};
+// en paralelo: estos tests crean las suyas (30 a 33, ver addTable en helpers.js).
 
 test('sin el token del QR no se entra a la mesa, y una mesa no puede actuar sobre otra', async () => {
   const counter = await connectStaff('counter', 'mostrador123');

@@ -17,6 +17,16 @@ const categoryEmojis = {
   salado: '🥪'
 };
 
+// Motivos con los que el server rechaza un new-order (ver el acknowledgement en server.js).
+const ORDER_ERRORS = {
+  table_unavailable: 'Tu mesa ya no está disponible. Escaneá de nuevo el QR de la mesa.',
+  table_disabled: 'La mesa no está habilitada para pedir. Consultá al personal.',
+  no_valid_items: 'Los productos del carrito ya no están disponibles.'
+};
+
+// Mismo tope que el server (MAX_NOTES_LENGTH en server.js).
+const MAX_NOTES_LENGTH = 300;
+
 // Pantalla completa que reemplaza a la vista de la mesa (mesa no disponible, visita
 // terminada o mesa bloqueada).
 function Notice({ icon: Icon, iconColor, title, children }) {
@@ -37,6 +47,8 @@ export default function ClientView({ tableId, qrToken, socket }) {
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [notes, setNotes] = useState('');
+  const [sendingOrder, setSendingOrder] = useState(false);
+  const [orderError, setOrderError] = useState('');
 
   // Table and Order States from Socket
   const [tableState, setTableState] = useState({
@@ -183,7 +195,9 @@ export default function ClientView({ tableId, qrToken, socket }) {
   // cuando el server rechaza por cooldown (assistance-ack) o, como último respaldo, a los
   // 60s si ninguna respuesta llega (ej. desconexión justo después de emitir).
   const callWaiter = () => {
-    if (assistanceRequested) return;
+    // Sin conexión no se emite: el llamado quedaría en el buffer y se perdería al reconectar
+    // (ver submitOrder), con el botón bloqueado en "Mozo en camino..." sin ningún llamado real.
+    if (assistanceRequested || !socket?.connected) return;
     socket.emit('request-assistance');
     setAssistanceRequested(true);
     armAssistanceTimer(60000);
@@ -236,20 +250,42 @@ export default function ClientView({ tableId, qrToken, socket }) {
   // pedido ya enviado (la cuenta de la mesa suma todos los pedidos igual). La mesa no
   // viaja en el payload (el server usa la de la conexión) y nombre y precio tampoco:
   // el server los toma de su menú.
+  //
+  // El carrito se vacía recién cuando el server confirma. Sin conexión no se emite nada:
+  // socket.io guardaría el evento y lo mandaría al reconectar *antes* del join a la mesa,
+  // y el server lo descartaría por venir de una conexión sin mesa (pedido perdido sin aviso).
   const submitOrder = () => {
-    if (cart.length === 0) return;
+    if (cart.length === 0 || sendingOrder) return;
+    if (!socket?.connected) {
+      setOrderError('Sin conexión con la cafetería. Esperá a que vuelva la señal y enviá de nuevo.');
+      return;
+    }
 
-    socket.emit('new-order', {
+    setSendingOrder(true);
+    setOrderError('');
+    socket.timeout(8000).emit('new-order', {
       items: cart.map(item => ({ productId: item.id, quantity: item.quantity })),
       notes
+    }, (err, res) => {
+      setSendingOrder(false);
+      if (err) {
+        // Puede haber llegado igual: si aparece en "Mi Cuenta Parcial", no hay que reenviarlo.
+        setOrderError('No hubo respuesta de la cafetería. Revisá "Mi Cuenta Parcial" antes de volver a enviar.');
+        return;
+      }
+      if (!res?.ok) {
+        setOrderError(ORDER_ERRORS[res?.error] || 'No se pudo enviar el pedido. Probá de nuevo.');
+        return;
+      }
+      setCart([]);
+      setNotes('');
+      setIsCartOpen(false);
     });
-
-    setCart([]);
-    setNotes('');
-    setIsCartOpen(false);
   };
 
-  const requestBill = (paymentMethod) => socket.emit('request-bill', { paymentMethod });
+  const requestBill = (paymentMethod) => {
+    if (socket?.connected) socket.emit('request-bill', { paymentMethod });
+  };
 
   const filteredMenu = activeCategory === 'todos' ? menu : menu.filter(item => item.category === activeCategory);
 
@@ -510,7 +546,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
       {/* Floating Cart Button (portaled to <body> so it stays fixed to the viewport,
           not to the animated .animate-fade-in wrapper, which creates its own containing block) */}
       {cart.length > 0 && createPortal(
-        <button className="cart-float-btn" onClick={() => setIsCartOpen(true)}>
+        <button className="cart-float-btn" onClick={() => { setOrderError(''); setIsCartOpen(true); }}>
           <ShoppingBag size={24} />
           <span className="cart-badge">{cart.reduce((sum, item) => sum + item.quantity, 0)}</span>
         </button>,
@@ -557,6 +593,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
+                maxLength={MAX_NOTES_LENGTH}
                 placeholder="Ej. café sin azúcar, medialuna bien caliente..."
                 style={{
                   width: '100%',
@@ -584,12 +621,19 @@ export default function ClientView({ tableId, qrToken, socket }) {
               </p>
             )}
 
+            {orderError && (
+              <p role="alert" style={{ color: 'var(--danger)', marginTop: '16px', fontSize: '0.9rem', textAlign: 'center' }}>
+                {orderError}
+              </p>
+            )}
+
             <button
               className="btn-primary"
               style={{ width: '100%', marginTop: '20px' }}
               onClick={submitOrder}
+              disabled={sendingOrder}
             >
-              Confirmar y Enviar Pedido
+              {sendingOrder ? 'Enviando...' : 'Confirmar y Enviar Pedido'}
             </button>
           </div>
         </div>,
