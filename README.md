@@ -57,11 +57,11 @@ El sistema utiliza una arquitectura cliente-servidor eficiente:
 4. **Acceso:** Abrir `http://localhost:5173/` y usar los parámetros de vista (ej. `?view=client`, `?view=kitchen`, `?view=counter`).
    - **Desde celulares en la misma red (simula el QR real):** abrir `http://<IP-de-tu-PC>:5173/?view=client&table=3&t=<token>` (Vite muestra la dirección como "Network" al arrancar; el link completo con el token de cada mesa sale del botón de QR de la mesa en el Mostrador). El frontend deduce solo la dirección del backend a partir del host, sin configurar IPs; si el backend vive en otro host/puerto, se puede sobreescribir con la variable `VITE_BACKEND_URL` al levantar el frontend. La primera vez, Windows puede pedir permiso de firewall para Node — aceptarlo.
 5. **Habilitar las mesas:** las mesas arrancan bloqueadas. En el Mostrador, "Iniciar Día" las habilita para recibir pedidos y "Cerrar Día" las vuelve a bloquear (las ocupadas, al cobrarlas).
-6. **Login de personal:** Las pantallas de Cocina y Mostrador piden una contraseña compartida por rol. Por defecto en desarrollo: `cocina123` (cocina) y `mostrador123` (mostrador). Para un despliegue real, sobreescribilas con las variables de entorno `KITCHEN_PASSWORD` y `COUNTER_PASSWORD` al levantar el backend.
+6. **Login de personal:** Las pantallas de Cocina y Mostrador piden una contraseña compartida por rol. Por defecto en desarrollo: `cocina123` (cocina) y `mostrador123` (mostrador). Para un despliegue real, sobreescribilas con las variables de entorno `KITCHEN_PASSWORD` y `COUNTER_PASSWORD` al levantar el backend. Las sesiones no vencen solas: se cierran con "Salir", con "Cerrar Otras Sesiones" en el Mostrador (tablet perdida, alguien que dejó de trabajar) o al reiniciar el backend, que es lo que pasa al cambiar las contraseñas. Tras 5 contraseñas incorrectas desde la misma IP, el login se bloquea 15 minutos.
 
 ## 🧪 Tests
 
-- **Unit tests de las reglas de negocio** (`backend/domain.test.js`, con `node:test`, sin levantar nada): `npm test --prefix backend` (o `npm run test:unit` desde la raíz).
+- **Unit tests** de las reglas de negocio y de las sesiones (`backend/*.test.js`, con `node:test`, sin levantar nada): `npm test --prefix backend` (o `npm run test:unit` desde la raíz).
 - **E2E** (Playwright, en `tests/`): con el backend y el frontend corriendo en modo desarrollo, `npx playwright test` desde la raíz. Arrancan con `/api/test/reset`, que **borra la base**: para no perder tu estado local, levantá el backend con `DB_PATH` apuntando a una base aparte.
 
 ## ☁️ Despliegue
@@ -77,6 +77,7 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 | --- | --- |
 | `DEV_MODE=1` | Solo desarrollo (lo setea `npm run dev` vía `backend/.env.development`): habilita los endpoints de test, las contraseñas por defecto y el CORS abierto. **Nunca en un despliegue.** Sin esta variable el server arranca seguro por defecto. |
 | `KITCHEN_PASSWORD` / `COUNTER_PASSWORD` | Contraseñas del personal. Obligatorias salvo con `DEV_MODE=1` o `DEMO_MODE=1`: sin ellas el server no arranca. |
+| `TRUST_PROXY` | Cantidad de proxies delante del server (normalmente `1` en Render, Railway o Fly.io). Necesario para que el freno de intentos de login distinga a cada cliente por su IP real. |
 | `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica (con las mesas habilitadas) tras un rato sin uso. |
 | `DEMO_IDLE_MINUTES` | Minutos sin actividad antes de reiniciar la demo (por defecto 30). |
 | `DB_PATH` | Ruta del archivo SQLite. En modo demo puede vivir en un disco efímero. |

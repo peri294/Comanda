@@ -40,6 +40,7 @@ import {
   assistanceDecision,
   closeOrders
 } from './domain.js';
+import { passwordMatches, createSessionStore, createLoginThrottle } from './auth.js';
 
 // Seguro por defecto: lo que solo sirve para desarrollar (endpoints de test que borran
 // la base, contraseñas por defecto, CORS abierto) existe únicamente con DEV_MODE=1, que
@@ -69,17 +70,21 @@ const ROLE_PASSWORDS = {
 const CORS_ORIGIN = process.env.CORS_ORIGIN || (DEV_MODE ? '*' : null);
 
 const app = express();
+// Detrás de un proxy (Render, Railway, Fly.io) todas las conexiones llegan desde la IP
+// del proxy: sin esto, el freno de login trataría a todos los clientes como uno solo.
+// TRUST_PROXY = cantidad de proxies delante del server (normalmente 1).
+if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY));
 if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json());
 
-// Tokens de sesión válidos por rol. Se quedan en memoria a propósito (a diferencia
-// de mesas/pedidos, que se persisten en SQLite): son sesiones de tablet de turno,
-// re-loguearse tras un restart no es pérdida de datos, y guardar tokens de sesión
-// en disco sería un riesgo de seguridad innecesario para este alcance.
-const validTokens = { kitchen: new Set(), counter: new Set() };
+// Sesiones de personal (ver auth.js): no vencen solas, se revocan con logout, desde el
+// Mostrador (revoke-other-sessions) o al reiniciar el server.
+const sessions = createSessionStore();
 
-const staffRoleOf = (token) =>
-  validTokens.counter.has(token) ? 'counter' : validTokens.kitchen.has(token) ? 'kitchen' : null;
+// Freno de fuerza bruta del login: 5 intentos fallidos por IP cada 15 minutos.
+const loginThrottle = createLoginThrottle({ maxFailures: 5, windowMs: 15 * 60_000 });
+
+const staffRoleOf = (token) => sessions.roleOf(token);
 
 // Exige un token de staff (cocina o mostrador) vía header "Authorization: Bearer <token>".
 // Deja el rol en req.staffRole para los endpoints que muestran distinto según quién pide.
@@ -249,6 +254,33 @@ const getSocketTable = (socket) => {
   return table && table.qrToken === bound.token ? table : null;
 };
 
+// --- SESIONES DE PERSONAL EN LOS SOCKETS ---
+
+// La conexión se unió a la sala del rol con un token que sigue vigente.
+const hasStaffRole = (socket, role) => {
+  const token = socket.data.staffTokens?.[role];
+  return Boolean(token) && staffRoleOf(token) === role;
+};
+
+// Saca a la conexión de la sala del rol (deja de recibir pedidos, mesas y caja) y le
+// avisa: el frontend vuelve a la pantalla de login con el evento auth-error.
+const expelFromRole = (socket, role) => {
+  delete socket.data.staffTokens[role];
+  socket.leave(role);
+  socket.emit('auth-error', { role });
+};
+
+// Revisa todas las pantallas de personal conectadas y corta las que tienen el token
+// revocado. Se llama después de revocar: una pantalla que solo mira (la de cocina casi
+// no emite) seguiría recibiendo los pedidos hasta su próximo evento.
+const expelStaleStaff = () => {
+  for (const socket of io.of('/').sockets.values()) {
+    for (const role of Object.keys(socket.data.staffTokens || {})) {
+      if (!hasStaffRole(socket, role)) expelFromRole(socket, role);
+    }
+  }
+};
+
 // Saca de la sala de la mesa a todas las conexiones atadas a ella (baja de la mesa, QR
 // regenerado o mesa cobrada), así dejan de recibir sus pedidos y estado y, por
 // getSocketTable, tampoco pueden actuar sobre la mesa.
@@ -302,19 +334,36 @@ app.get('/api/menu', (req, res) => {
   res.json(menuCache);
 });
 
-// Login de personal (cocina/mostrador). Devuelve un token de sesión de larga duración
-// que el frontend guarda en localStorage para no pedir contraseña en cada carga.
+// Login de personal (cocina/mostrador). Devuelve un token de sesión que el frontend
+// guarda en localStorage para no pedir contraseña en cada carga.
 app.post('/api/auth/login', (req, res) => {
   const { role, password } = req.body || {};
-  if (!ROLE_PASSWORDS[role]) {
+  if (!Object.hasOwn(ROLE_PASSWORDS, role)) {
     return res.status(400).json({ error: 'Rol inválido' });
   }
-  if (password !== ROLE_PASSWORDS[role]) {
+  const limit = loginThrottle.check(req.ip);
+  if (!limit.allowed) {
+    const retryAfterSec = Math.ceil(limit.retryAfterMs / 1000);
+    res.set('Retry-After', String(retryAfterSec));
+    return res.status(429).json({
+      error: `Demasiados intentos fallidos. Probá de nuevo en ${Math.ceil(retryAfterSec / 60)} min.`
+    });
+  }
+  if (!passwordMatches(password, ROLE_PASSWORDS[role])) {
+    loginThrottle.fail(req.ip);
     return res.status(401).json({ error: 'Contraseña incorrecta' });
   }
-  const token = crypto.randomUUID();
-  validTokens[role].add(token);
-  res.json({ token });
+  loginThrottle.succeed(req.ip);
+  res.json({ token: sessions.create(role) });
+});
+
+// Logout: revoca el token en el server (antes cerrar sesión solo lo borraba del
+// navegador, y una copia del token seguía sirviendo) y corta en el acto las
+// pantallas conectadas con él.
+app.post('/api/auth/logout', (req, res) => {
+  sessions.revoke((req.headers.authorization || '').replace('Bearer ', ''));
+  expelStaleStaff();
+  res.json({ ok: true });
 });
 
 // Obtener estado inicial de mesas y pedidos activos (requiere sesión de personal)
@@ -409,9 +458,14 @@ io.on('connection', (socket) => {
   // Cualquier acción (no el join, que es solo mirar) cuenta como actividad de la demo.
   if (DEMO_MODE) socket.onAny((event) => { if (event !== 'join') markDemoActivity(); });
 
-  // Evento de personal: se ignora si esta conexión no se unió con ese rol (join con token).
+  // Evento de personal: se ignora si esta conexión no se unió con ese rol (join con
+  // token). El token se revalida en cada evento: si se revocó después del join, la
+  // conexión pierde el rol (antes lo conservaba hasta reconectarse).
   const staffOn = (role, event, handler) =>
-    socket.on(event, (...args) => { if (socket.data.roles?.has(role)) handler(...args); });
+    socket.on(event, (...args) => {
+      if (hasStaffRole(socket, role)) handler(...args);
+      else if (socket.data.staffTokens?.[role]) expelFromRole(socket, role);
+    });
 
   // Unirse a un rol/canal específico. 'kitchen' y 'counter' son canales de personal
   // y requieren un token de sesión válido; 'table-X' requiere el token del QR de la mesa.
@@ -419,12 +473,11 @@ io.on('connection', (socket) => {
     if (typeof role !== 'string') return;
 
     if (role === 'kitchen' || role === 'counter') {
-      if (!validTokens[role].has(token)) {
+      if (staffRoleOf(token) !== role) {
         socket.emit('auth-error', { role });
         return;
       }
-      socket.data.roles = socket.data.roles || new Set();
-      socket.data.roles.add(role);
+      socket.data.staffTokens = { ...socket.data.staffTokens, [role]: token };
       socket.join(role);
       console.log(`Socket ${socket.id} se unió al canal: ${role}`);
       return;
@@ -732,6 +785,16 @@ io.on('connection', (socket) => {
     // Para volver a pedir hay que escanear el QR de nuevo.
     io.to(`table-${tableId}`).emit('table-closed');
     kickTableClients(tableId);
+  });
+
+  // Evento: Cerrar todas las demás sesiones de personal (desde Mostrador). Para una
+  // tablet perdida o alguien que dejó de trabajar: todas las pantallas de cocina y
+  // mostrador vuelven al login, salvo la que lo pidió. Si la contraseña también se
+  // filtró, hay que cambiarla (y reiniciar el server, que cierra todas las sesiones).
+  staffOn('counter', 'revoke-other-sessions', () => {
+    const revoked = sessions.revokeAllExcept(socket.data.staffTokens.counter);
+    expelStaleStaff();
+    socket.emit('other-sessions-revoked', { revoked });
   });
 
   // --- CRUD DEL MENÚ (desde Mostrador) ---

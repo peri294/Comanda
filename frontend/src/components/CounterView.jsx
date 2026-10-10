@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon, ShieldOff } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
 import TableQrModal from './TableQrModal';
@@ -152,6 +152,13 @@ export default function CounterView({ socket, token, onLogout }) {
       notify('register_closed', 'Caja cerrada', `Cierre por $${total} (${ordersCount} ${ordersCount === 1 ? 'pedido cobrado' : 'pedidos cobrados'}).`, 'success');
     });
 
+    // Respuesta a "Cerrar otras sesiones": cuántas pantallas volvieron al login
+    socket.on('other-sessions-revoked', ({ revoked }) => {
+      notify('sessions_revoked', 'Sesiones cerradas',
+        revoked === 0 ? 'No había otras sesiones abiertas.' : `Se cerraron ${revoked} ${revoked === 1 ? 'sesión' : 'sesiones'} de cocina y mostrador.`,
+        'success');
+    });
+
     // Una mesa llamó al mozo
     socket.on('assistance-requested', ({ tableId, timestamp }) => {
       setAssistanceRequests(prev => {
@@ -175,6 +182,7 @@ export default function CounterView({ socket, token, onLogout }) {
       socket.off('register-closed');
       socket.off('assistance-requested');
       socket.off('menu-updated');
+      socket.off('other-sessions-revoked');
     };
   }, [socket]);
 
@@ -338,6 +346,13 @@ export default function CounterView({ socket, token, onLogout }) {
     if (menuForm.id === item.id) setMenuForm(emptyMenuForm);
   };
 
+  // Para una tablet perdida o alguien que dejó de trabajar: todas las demás pantallas
+  // de cocina y mostrador vuelven al login (esta no).
+  const handleRevokeOtherSessions = () => {
+    if (!window.confirm('¿Cerrar todas las demás sesiones? Las otras pantallas de cocina y mostrador vuelven al login y hay que ingresar la contraseña de nuevo. Si la contraseña se filtró, además hay que cambiarla.')) return;
+    socket.emit('revoke-other-sessions');
+  };
+
   // Cierre de caja: el server sella el total real desde el cierre anterior; el monto
   // del confirm es informativo (lo que muestra la pantalla en este momento).
   const handleCloseRegister = () => {
@@ -418,6 +433,14 @@ export default function CounterView({ socket, token, onLogout }) {
             title="Administrar los productos del menú (precios, stock, altas y bajas)"
           >
             <BookOpen size={16} /> Administrar Menú
+          </button>
+          <button
+            className="btn-secondary"
+            style={headerButtonStyle}
+            onClick={handleRevokeOtherSessions}
+            title="Cerrar las sesiones de las demás pantallas (tablet perdida, alguien que dejó de trabajar)"
+          >
+            <ShieldOff size={16} /> Cerrar Otras Sesiones
           </button>
           <button
             className="btn-secondary"

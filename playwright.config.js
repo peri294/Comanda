@@ -15,7 +15,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /day-cycle\.spec\.js/,
+      testIgnore: /(day-cycle|sessions)\.spec\.js/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -24,6 +24,14 @@ export default defineConfig({
       name: 'day-cycle',
       testMatch: /day-cycle\.spec\.js/,
       dependencies: ['chromium'],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // "Cerrar Otras Sesiones" revoca las sesiones de personal de todos los specs: corre
+      // último, cuando ya no queda ninguno que las necesite.
+      name: 'sessions',
+      testMatch: /sessions\.spec\.js/,
+      dependencies: ['day-cycle'],
       use: { ...devices['Desktop Chrome'] },
     },
   ],

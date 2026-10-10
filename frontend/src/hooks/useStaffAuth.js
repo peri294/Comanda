@@ -31,9 +31,18 @@ export function useStaffAuth(role) {
     }
   }, [role]);
 
-  // Se llama también cuando el server rechaza el token (ej. se reinició y perdió
-  // las sesiones en memoria), para volver a mostrar el login.
+  // Se llama también cuando el server rechaza el token (revocado o perdido en un
+  // reinicio), para volver a mostrar el login. Avisa al server para que revoque el
+  // token: borrarlo solo del navegador dejaba vigente cualquier copia. Si el aviso
+  // falla (sin conexión), "Cerrar Otras Sesiones" o un reinicio lo revocan.
   const logout = useCallback(() => {
+    const current = localStorage.getItem(storageKey(role));
+    if (current) {
+      fetch(`${BACKEND_URL}/api/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${current}` }
+      }).catch(() => {});
+    }
     localStorage.removeItem(storageKey(role));
     setToken(null);
   }, [role]);
