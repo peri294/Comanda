@@ -119,6 +119,8 @@ test('un payload null en los eventos del personal no tira abajo el server', asyn
   ['edit-order', 'cancel-order', 'resolve-assistance', 'remove-table', 'regenerate-table-qr',
     'set-table-enabled', 'close-table', 'menu-add', 'menu-update', 'menu-delete']
     .forEach(event => counter.emit(event, null));
+  // Sin payload: resolve-assistance era el único handler sin default `= {}`
+  counter.emit('resolve-assistance');
   await settle();
 
   expect((await fetch(`${BACKEND}/api/menu`)).ok).toBe(true);
