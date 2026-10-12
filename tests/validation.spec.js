@@ -104,3 +104,27 @@ test('un payload null en los eventos públicos no tira abajo el server', async (
 
   attacker.close();
 });
+
+test('un payload null en los eventos del personal no tira abajo el server', async () => {
+  const counter = await connect();
+  counter.emit('join', { role: 'counter', token: await login('counter', 'mostrador123') });
+  const kitchen = await connect();
+  kitchen.emit('join', { role: 'kitchen', token: await login('kitchen', 'cocina123') });
+  await settle();
+
+  // Solo los eventos que leen el payload. add-table queda afuera: sin número agrega una
+  // mesa, y las que no ignoran el payload (end-day, close-register, revoke-other-sessions)
+  // afectarían a los specs que corren en paralelo.
+  kitchen.emit('update-order-status', null);
+  ['edit-order', 'cancel-order', 'resolve-assistance', 'remove-table', 'regenerate-table-qr',
+    'set-table-enabled', 'close-table', 'menu-add', 'menu-update', 'menu-delete']
+    .forEach(event => counter.emit(event, null));
+  await settle();
+
+  expect((await fetch(`${BACKEND}/api/menu`)).ok).toBe(true);
+  expect(counter.connected).toBe(true);
+  expect(kitchen.connected).toBe(true);
+
+  counter.close();
+  kitchen.close();
+});

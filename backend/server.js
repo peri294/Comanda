@@ -466,9 +466,11 @@ io.on('connection', (socket) => {
   // Evento de personal: se ignora si esta conexión no se unió con ese rol (join con
   // token). El token se revalida en cada evento: si se revocó después del join, la
   // conexión pierde el rol (antes lo conservaba hasta reconectarse).
+  // El payload llega siempre como objeto (ver payloadOf): un emit con null de una
+  // pantalla de personal tiraba abajo el server igual que desde una mesa.
   const staffOn = (role, event, handler) =>
-    socket.on(event, (...args) => {
-      if (hasStaffRole(socket, role)) handler(...args);
+    socket.on(event, (data) => {
+      if (hasStaffRole(socket, role)) handler(payloadOf(data));
       else if (socket.data.staffTokens?.[role]) expelFromRole(socket, role);
     });
 
