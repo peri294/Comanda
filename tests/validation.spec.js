@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { joinTable, login, connect, fetchState, settle } from './helpers.js';
+import { BACKEND, joinTable, login, connect, fetchState, settle } from './helpers.js';
 
 test('cocina solo puede avanzar un pedido por estados válidos', async () => {
   const counterToken = await login('counter', 'mostrador123');
@@ -88,4 +88,19 @@ test('la cuenta solo se pide con un método válido y la mesa con todo entregado
 
   client.close();
   kitchen.close();
+});
+
+test('un payload null en los eventos públicos no tira abajo el server', async () => {
+  // Sin login ni token de mesa: lo que puede mandar cualquiera desde la consola
+  const attacker = await connect();
+  attacker.emit('join', null);
+  attacker.emit('request-bill', null);
+  attacker.emit('new-order', null);
+  await settle();
+
+  // El server sigue vivo: responde HTTP y la conexión no se cortó
+  expect((await fetch(`${BACKEND}/api/menu`)).ok).toBe(true);
+  expect(attacker.connected).toBe(true);
+
+  attacker.close();
 });

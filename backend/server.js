@@ -243,6 +243,11 @@ const activeAssistanceRequests = persistedState.assistanceRequests;
 
 const findTable = (tableId) => tables.find(t => t.id === tableId);
 
+// Payload de un evento de socket como objeto. El default `= {}` de un parámetro
+// desestructurado solo cubre undefined: con un emit(evento, null) el handler tiraba un
+// TypeError que Socket.IO no atrapa, y cualquiera sin login tiraba abajo el server.
+const payloadOf = (data) => (data !== null && typeof data === 'object' ? data : {});
+
 // Mesa a la que está atada esta conexión (por un join con token válido), o null.
 // Se revalida contra el token actual y contra la sala: si la mesa se dio de baja, su QR
 // se regeneró o se cobró (kickTableClients), la conexión pierde el acceso aunque siga
@@ -469,7 +474,8 @@ io.on('connection', (socket) => {
 
   // Unirse a un rol/canal específico. 'kitchen' y 'counter' son canales de personal
   // y requieren un token de sesión válido; 'table-X' requiere el token del QR de la mesa.
-  socket.on('join', ({ role, token } = {}) => {
+  socket.on('join', (data) => {
+    const { role, token } = payloadOf(data);
     if (typeof role !== 'string') return;
 
     if (role === 'kitchen' || role === 'counter') {
@@ -622,7 +628,8 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Solicitar cierre de cuenta (desde Cliente)
-  socket.on('request-bill', ({ paymentMethod } = {}) => {
+  socket.on('request-bill', (data) => {
+    const { paymentMethod } = payloadOf(data);
     const table = getSocketTable(socket);
     if (!table) return;
     const tableId = table.id;
