@@ -10,7 +10,18 @@ Sistema de pedidos en tiempo real para cafeterías: el cliente escanea el QR de 
 ![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
 ![Playwright](https://img.shields.io/badge/Playwright-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)
 
-<!-- TODO: link a la demo pública (DEMO_MODE=1) y capturas de las tres vistas -->
+[![CI](https://github.com/peri294/PPR/actions/workflows/ci.yml/badge.svg)](https://github.com/peri294/PPR/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+<!-- TODO: link a la demo pública en Render (ver "Despliegue") -->
+
+<p align="center">
+  <img src="docs/screenshots/mostrador.png" alt="Panel del mostrador con el estado de cada mesa, la caja del día y los llamados al mozo" width="100%">
+</p>
+
+| Cocina | Cliente: menú | Cliente: carrito |
+| --- | --- | --- |
+| <img src="docs/screenshots/cocina.png" alt="Monitor de cocina con las comandas por estado"> | <img src="docs/screenshots/cliente-menu.png" alt="Menú de la mesa en el celular" width="220"> | <img src="docs/screenshots/cliente-carrito.png" alt="Carrito con notas para la cocina" width="220"> |
 
 ##  Qué resuelve
 
@@ -112,10 +123,10 @@ cd frontend && npm install && npm run dev
 
 ```bash
 npm run test:unit        # 32 unit tests del dominio y las sesiones (node:test)
-npx playwright test      # 22 tests E2E (requiere backend y frontend corriendo en dev)
+npx playwright test      # 24 tests E2E (requiere backend y frontend corriendo en dev)
 ```
 
-Los E2E cubren los flujos completos (pedido → cocina → cobro), la reconexión con pedidos en vuelo, el ciclo del día y la seguridad del transporte (tokens de mesa, roles, validación de payloads). Arrancan con `/api/test/reset`, que **borra la base**: para conservar tu estado local, levantá el backend con `DB_PATH` apuntando a otro archivo.
+Los E2E cubren los flujos completos (pedido → cocina → cobro), la reconexión con pedidos en vuelo, el ciclo del día y la seguridad del transporte (tokens de mesa, roles, validación de payloads). En cada push, [GitHub Actions](.github/workflows/ci.yml) corre los unit tests, el lint, el build y la suite E2E completa. Los E2E arrancan con `/api/test/reset`, que **borra la base**: para conservar tu estado local, levantá el backend con `DB_PATH` apuntando a otro archivo.
 
 ##  Despliegue
 
@@ -125,6 +136,8 @@ En producción todo corre como un solo servicio: el backend sirve el build del f
 npm run build   # instala dependencias y compila el frontend
 npm start       # levanta el server (usa PORT si el hosting la define)
 ```
+
+**Demo en Render:** el repo incluye un [`render.yaml`](render.yaml) que despliega la demo pública en el plan gratuito. En Render: *New → Blueprint* y elegir este repositorio.
 
 | Variable | Uso |
 | --- | --- |
@@ -138,4 +151,4 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 
 ##  Autor
 
-Desarrollado por [peri294](https://github.com/peri294)
+Desarrollado por [peri294](https://github.com/peri294). Distribuido bajo licencia [MIT](LICENSE).

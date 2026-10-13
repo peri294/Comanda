@@ -1,0 +1,19 @@
+# Demo pública en Render (plan gratuito): New → Blueprint → elegir este repo.
+# Un solo servicio Node sirve la API, los WebSockets y el build del frontend.
+services:
+  - type: web
+    name: qr-coffee-shop
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/menu
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Modo demo: el portal muestra las mesas y las contraseñas, y el estado vuelve a
+      # fábrica tras un rato sin uso. La base vive en el disco efímero del servicio.
+      - key: DEMO_MODE
+        value: "1"
+      - key: TRUST_PROXY
+        value: "1"
