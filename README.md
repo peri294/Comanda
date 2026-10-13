@@ -12,7 +12,7 @@ Sistema de pedidos en tiempo real para cafeterías: el cliente escanea el QR de 
 
 <!-- TODO: link a la demo pública (DEMO_MODE=1) y capturas de las tres vistas -->
 
-## 🎯 Qué resuelve
+##  Qué resuelve
 
 En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → caja. QR Coffee Shop elimina esos saltos. Hay tres vistas sobre un mismo build, y cada una ve solo lo que le corresponde:
 
@@ -22,7 +22,7 @@ En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → 
 | **Cocina** (`?view=kitchen`) | La cocina, en una tablet | Tablero de comandas: pendiente → en preparación → listo, con aviso sonoro |
 | **Mostrador** (`?view=counter`) | La caja / encargado | Estado de todas las mesas, cobros, edición y cancelación de pedidos, llamados al mozo, CRUD del menú y stock, alta/baja de mesas, QR imprimible por mesa, inicio y cierre del día, cierre de caja |
 
-## 🚀 Características
+##  Características
 
 - **Tiempo real con salas por rol y por mesa:** cada conexión entra a su sala de Socket.io (cocina, mostrador o una mesa puntual) y solo recibe sus eventos.
 - **Pedidos confirmados por acknowledgement:** el carrito se vacía recién cuando el server confirma el pedido. Si el celular pierde la señal, el pedido se reenvía al reconectar y llega una sola vez.
@@ -32,7 +32,7 @@ En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → 
 - **Audio sintetizado con Web Audio API** para las alertas de cocina y mostrador, sin archivos externos.
 - **UI glassmorphism con modo oscuro**, pensada para celular (cliente) y tablet (cocina/mostrador).
 
-## 🔒 Seguridad
+##  Seguridad
 
 El sistema está expuesto a cualquiera que tenga el link de una mesa, así que el server no confía en el navegador:
 
@@ -42,7 +42,7 @@ El sistema está expuesto a cualquiera que tenga el link de una mesa, así que e
 - **Seguro por defecto:** sin `DEV_MODE=1` el server no expone endpoints de test, no acepta contraseñas por defecto ni CORS abierto, y no arranca si faltan las contraseñas.
 - **Al cobrar una mesa** el server desconecta sus celulares, para que el próximo grupo no vea los pedidos del anterior.
 
-## 🏗️ Arquitectura
+##  Arquitectura
 
 ```
   Cliente (QR)        Cocina          Mostrador
@@ -65,7 +65,7 @@ El backend separa capas: `domain.js` contiene las reglas de negocio como funcion
 
 Las decisiones de diseño (y las alternativas descartadas) están documentadas en [`proyecto_memoria.md`](proyecto_memoria.md).
 
-## 🛠️ Stack
+##  Stack
 
 | Capa | Tecnologías |
 | --- | --- |
@@ -76,7 +76,7 @@ Las decisiones de diseño (y las alternativas descartadas) están documentadas e
 | Calidad | ESLint (reglas de React Hooks) |
 | Despliegue | Un único servicio Node que sirve la API, los WebSockets y el build del frontend |
 
-## 📁 Estructura
+##  Estructura
 
 ```
 backend/
@@ -91,7 +91,7 @@ frontend/src/
 tests/            Specs E2E de Playwright
 ```
 
-## 💻 Correr en local
+##  Correr en local
 
 **Requisito:** [Node.js](https://nodejs.org/) **22.13 o superior** (por `node:sqlite`).
 
@@ -108,7 +108,7 @@ cd frontend && npm install && npm run dev
 3. En el Mostrador, tocá **"Iniciar Día"** para habilitar las mesas.
 4. **Desde un celular en la misma red:** abrí la dirección "Network" que muestra Vite, con el link de la mesa (sale del botón de QR en el Mostrador). El frontend deduce solo la dirección del backend; si vive en otro host, usá `VITE_BACKEND_URL`. La primera vez, Windows puede pedir permiso de firewall para Node.
 
-## 🧪 Tests
+##  Tests
 
 ```bash
 npm run test:unit        # 32 unit tests del dominio y las sesiones (node:test)
@@ -117,7 +117,7 @@ npx playwright test      # 22 tests E2E (requiere backend y frontend corriendo e
 
 Los E2E cubren los flujos completos (pedido → cocina → cobro), la reconexión con pedidos en vuelo, el ciclo del día y la seguridad del transporte (tokens de mesa, roles, validación de payloads). Arrancan con `/api/test/reset`, que **borra la base**: para conservar tu estado local, levantá el backend con `DB_PATH` apuntando a otro archivo.
 
-## ☁️ Despliegue
+##  Despliegue
 
 En producción todo corre como un solo servicio: el backend sirve el build del frontend en el mismo origen. Funciona en hostings con procesos Node persistentes y WebSockets (Render, Railway, Fly.io), no en funciones serverless.
 
@@ -136,6 +136,6 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 | `CORS_ORIGIN` | Solo si el frontend se publica en otro dominio (junto con `VITE_BACKEND_URL` al compilarlo). |
 | `DEV_MODE=1` | Solo desarrollo (lo setea `npm run dev`): endpoints de test, contraseñas por defecto y CORS abierto. **Nunca en un despliegue.** |
 
-## 👤 Autor
+##  Autor
 
-Desarrollado por [peri294](https://github.com/peri294) como proyecto de portfolio.
+Desarrollado por [peri294](https://github.com/peri294)
