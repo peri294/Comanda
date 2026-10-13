@@ -30,6 +30,14 @@ export default function KitchenView({ socket, token, onLogout }) {
   const [orders, setOrders] = useState([]);
   // Pedidos que el mostrador acaba de corregir, para resaltarlos un rato en la tarjeta
   const [flashIds, setFlashIds] = useState(new Set());
+  // Reloj para el "Hace X min" de cada tarjeta: sin él el tiempo quedaba congelado en el
+  // último render, y leer Date.now() durante el render no es puro.
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Pedidos activos iniciales, re-pedidos también tras cada reconexión del socket:
   // los pedidos que entraron mientras la pantalla estuvo sin conexión no llegan solos
@@ -104,7 +112,7 @@ export default function KitchenView({ socket, token, onLogout }) {
 
   // Time elapsed helper
   const getMinutesAgo = (dateStr) => {
-    const elapsedMs = Date.now() - new Date(dateStr).getTime();
+    const elapsedMs = now - new Date(dateStr).getTime();
     const mins = Math.floor(elapsedMs / 60000);
     if (mins < 1) return 'Hace instantes';
     return `Hace ${mins} min`;

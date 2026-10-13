@@ -8,6 +8,15 @@ import { MENU_CATEGORIES } from '../menuCategories';
 
 const headerButtonStyle = { padding: '10px 16px', fontSize: '0.8rem' };
 const smallButtonStyle = { padding: '4px 8px', fontSize: '0.75rem' };
+// Estado del pedido como se muestra en la tarjeta de la mesa (el valor crudo salía
+// como "En_preparacion").
+const ORDER_STATUS_LABELS = {
+  pendiente: 'Pendiente',
+  en_preparacion: 'En preparación',
+  listo: 'Listo',
+  entregado: 'Entregado',
+  cancelado: 'Cancelado'
+};
 const inputStyle = {
   padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
   border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
@@ -528,7 +537,7 @@ export default function CounterView({ socket, token, onLogout }) {
                       </div>
                       {order && (
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                          Pedido: <span style={{ textTransform: 'capitalize', fontWeight: 600 }}>{order.status}</span>
+                          Pedido: <span style={{ fontWeight: 600 }}>{ORDER_STATUS_LABELS[order.status] ?? order.status}</span>
                         </div>
                       )}
                     </div>

@@ -274,6 +274,39 @@ body {
   color: var(--accent-gold);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-status-text {
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.header-actions .btn-secondary {
+  white-space: nowrap;
+}
+
+/* Celular: el header no entraba en 390px (la pastilla de conexión se partía en dos
+   líneas y el botón del portal quedaba cortado). Queda el punto de color como estado. */
+@media (max-width: 480px) {
+  .logo {
+    font-size: 1.15rem;
+    gap: 6px;
+  }
+  .header-actions {
+    gap: 8px;
+  }
+  .header-status {
+    padding: 8px;
+  }
+  .header-status-text {
+    display: none;
+  }
+}
+
 .main-content {
   flex: 1;
   padding: 30px;

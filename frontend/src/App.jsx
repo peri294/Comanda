@@ -68,6 +68,9 @@ export default function App() {
     // La demo pública volvió a fábrica: recargar para tomar el estado nuevo de una vez.
     newSocket.on('demo-reset', () => window.location.reload());
 
+    // El socket es una conexión externa que nace con el efecto y muere en su cleanup:
+    // guardarlo en el estado es la forma de compartirlo con las vistas.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSocket(newSocket);
     // Referencia global para los tests E2E (simulan cortes y reconexiones de socket
     // llamando a __socket.disconnect()/connect() desde la página).
@@ -150,10 +153,12 @@ export default function App() {
           <span>CAFÉ</span> PREMIUM
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div className="header-actions">
           {/* Connection Status Badge */}
-          <span 
-            className="badge" 
+          <span
+            className="badge header-status"
+            role="status"
+            aria-label={isConnected ? 'Servidor conectado' : 'Sin conexión'}
             style={{ 
               background: isConnected ? 'rgba(96, 180, 123, 0.12)' : 'rgba(231, 111, 81, 0.12)',
               color: isConnected ? 'var(--success)' : 'var(--danger)',
@@ -167,9 +172,9 @@ export default function App() {
               borderRadius: '50%', 
               background: isConnected ? 'var(--success)' : 'var(--danger)',
               display: 'inline-block',
-              marginRight: '6px'
+              flexShrink: 0
             }} />
-            {isConnected ? 'Servidor Conectado' : 'Sin Conexión'}
+            <span className="header-status-text">{isConnected ? 'Servidor Conectado' : 'Sin Conexión'}</span>
           </span>
 
           {view !== 'portal' && (
