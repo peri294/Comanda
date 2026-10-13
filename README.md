@@ -1,72 +1,125 @@
-# QR Coffee Shop (PPR)
+# QR Coffee Shop
 
-Un sistema de gestión de cafetería en tiempo real con arquitectura cliente-servidor, diseñado para coordinar pedidos entre clientes, cocina y mostrador de forma fluida.
+Sistema de pedidos en tiempo real para cafeterías: el cliente escanea el QR de su mesa y pide desde el celular, la cocina ve las comandas al instante y el mostrador gestiona mesas, menú, cobros y caja. Todo sincronizado por WebSockets.
 
-![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
-![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![React](https://img.shields.io/badge/React_19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js_22-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)
 ![Socket.io](https://img.shields.io/badge/Socket.io-010101?style=for-the-badge&logo=socket.io&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![Playwright](https://img.shields.io/badge/Playwright-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)
 
-## 🎯 Descripción
-QR Coffee Shop es un sistema integral que digitaliza el proceso de toma de pedidos. Permite a los clientes realizar pedidos desde sus mesas mediante códigos QR, mientras la cocina y el mostrador reciben actualizaciones instantáneas, eliminando cuellos de botella en la comunicación.
+<!-- TODO: link a la demo pública (DEMO_MODE=1) y capturas de las tres vistas -->
 
-## 🚀 Características Principales
-* **Comunicación en Tiempo Real:** Actualizaciones inmediatas entre vistas mediante WebSockets (`Socket.io`).
-* **Menú Administrable:** El mostrador gestiona productos, precios y stock ("Agotado") desde su panel; los clientes ven los cambios al instante, sin recargar.
-* **Arquitectura Unificada:** Un único build de frontend que sirve para tres roles (Cliente, Cocina, Mostrador) mediante parámetros de consulta.
-* **UI/UX Moderna:** Diseño inspirado en *Glassmorphism* con modo oscuro nativo.
-* **Sistema de Notificaciones:** Sistema de audio sintético para alertas instantáneas en cocina y mostrador.
+## 🎯 Qué resuelve
+
+En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → caja. QR Coffee Shop elimina esos saltos. Hay tres vistas sobre un mismo build, y cada una ve solo lo que le corresponde:
+
+| Vista | Quién la usa | Qué hace |
+| --- | --- | --- |
+| **Cliente** (`?view=client`) | El cliente, desde el QR de su mesa | Ver el menú con stock en vivo, armar el carrito con notas, enviar rondas de pedidos, seguir su estado, pedir la cuenta (efectivo/tarjeta) y llamar al mozo |
+| **Cocina** (`?view=kitchen`) | La cocina, en una tablet | Tablero de comandas: pendiente → en preparación → listo, con aviso sonoro |
+| **Mostrador** (`?view=counter`) | La caja / encargado | Estado de todas las mesas, cobros, edición y cancelación de pedidos, llamados al mozo, CRUD del menú y stock, alta/baja de mesas, QR imprimible por mesa, inicio y cierre del día, cierre de caja |
+
+## 🚀 Características
+
+- **Tiempo real con salas por rol y por mesa:** cada conexión entra a su sala de Socket.io (cocina, mostrador o una mesa puntual) y solo recibe sus eventos.
+- **Pedidos confirmados por acknowledgement:** el carrito se vacía recién cuando el server confirma el pedido. Si el celular pierde la señal, el pedido se reenvía al reconectar y llega una sola vez.
+- **Persistencia write-through en SQLite:** el estado de trabajo vive en memoria y cada cambio se escribe en disco de forma sincrónica (WAL, prepared statements, migraciones de esquema). Mesas, pedidos y caja sobreviven a un reinicio del server.
+- **Menú administrable:** productos, precios y stock ("Agotado") se editan desde el Mostrador y los clientes ven el cambio sin recargar.
+- **Ciclo del día:** las mesas arrancan bloqueadas; "Iniciar Día" las habilita y "Cerrar Día" las bloquea, respetando las que todavía tienen clientes (se bloquean al cobrarlas).
+- **Audio sintetizado con Web Audio API** para las alertas de cocina y mostrador, sin archivos externos.
+- **UI glassmorphism con modo oscuro**, pensada para celular (cliente) y tablet (cocina/mostrador).
+
+## 🔒 Seguridad
+
+El sistema está expuesto a cualquiera que tenga el link de una mesa, así que el server no confía en el navegador:
+
+- **Token secreto por mesa en el QR:** sin el token no se entra a la sala de la mesa. Los pedidos, la cuenta y los llamados usan la mesa atada a la conexión, nunca un `tableId` enviado por el cliente. El Mostrador puede regenerar el QR.
+- **Precios y nombres resueltos en el server:** el cliente manda solo IDs de producto y cantidades. Se validan los payloads, las transiciones de estado de los pedidos y el método de pago.
+- **Login de personal por rol:** contraseñas comparadas en tiempo constante (`crypto.timingSafeEqual`), sesiones revocables ("Salir" o "Cerrar Otras Sesiones" ante una tablet perdida) y bloqueo de 15 minutos tras 5 intentos fallidos desde la misma IP.
+- **Seguro por defecto:** sin `DEV_MODE=1` el server no expone endpoints de test, no acepta contraseñas por defecto ni CORS abierto, y no arranca si faltan las contraseñas.
+- **Al cobrar una mesa** el server desconecta sus celulares, para que el próximo grupo no vea los pedidos del anterior.
 
 ## 🏗️ Arquitectura
-El sistema utiliza una arquitectura cliente-servidor eficiente:
 
 ```
-                      +-------------------+
-                      |   Servidor Node   |
-                      | (Express/Sockets) |
-                      +---------+---------+
-                                |
-        +-----------------------+-----------------------+
-        |                       |                       |
-+-------v-------+       +-------v-------+       +-------v-------+
-|  Cliente (QR) |       | Cocina Screen |       | Mostrador UI  |
-| (Mobile View) |       | (Order Board) |       |  (Dashboard)  |
-+---------------+       +---------------+       +---------------+
+  Cliente (QR)        Cocina          Mostrador
+  React · celular    React · tablet   React · tablet
+        \                |                /
+         \     WebSocket (Socket.io)     /
+          \       + REST (Express)      /
+           +----------------------------+
+           |        Node.js server      |
+           |  server.js  → transporte   |
+           |  domain.js  → reglas       |
+           |  auth.js    → sesiones     |
+           |  db.js      → persistencia |
+           +-------------+--------------+
+                         |
+                  SQLite (node:sqlite)
 ```
 
-## 🛠️ Stack Tecnológico
-- **Frontend:** React (Vite), CSS Custom.
-- **Backend:** Node.js, Express, Socket.io.
-- **Persistencia:** SQLite embebido (módulo `node:sqlite`, sin dependencias externas) — mesas y pedidos sobreviven a un reinicio del servidor.
-- **Comunicación:** WebSockets para baja latencia.
+El backend separa capas: `domain.js` contiene las reglas de negocio como funciones puras, sin sockets ni base de datos, y por eso se prueba con unit tests. `server.js` solo recibe el evento, llama al dominio, persiste y emite.
 
-## 💻 Guía de Ejecución
+Las decisiones de diseño (y las alternativas descartadas) están documentadas en [`proyecto_memoria.md`](proyecto_memoria.md).
 
-1. **Requisitos:** Tener instalado [Node.js](https://nodejs.org/) **22.13 o superior** (el backend usa el módulo `node:sqlite` incluido en Node para persistir mesas y pedidos, sin dependencias nativas).
-2. **Backend:**
-   ```bash
-   cd backend
-   npm install
-   npm run dev
-   ```
-3. **Frontend:**
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-4. **Acceso:** Abrir `http://localhost:5173/` y usar los parámetros de vista (ej. `?view=client`, `?view=kitchen`, `?view=counter`).
-   - **Desde celulares en la misma red (simula el QR real):** abrir `http://<IP-de-tu-PC>:5173/?view=client&table=3&t=<token>` (Vite muestra la dirección como "Network" al arrancar; el link completo con el token de cada mesa sale del botón de QR de la mesa en el Mostrador). El frontend deduce solo la dirección del backend a partir del host, sin configurar IPs; si el backend vive en otro host/puerto, se puede sobreescribir con la variable `VITE_BACKEND_URL` al levantar el frontend. La primera vez, Windows puede pedir permiso de firewall para Node — aceptarlo.
-5. **Habilitar las mesas:** las mesas arrancan bloqueadas. En el Mostrador, "Iniciar Día" las habilita para recibir pedidos y "Cerrar Día" las vuelve a bloquear (las ocupadas, al cobrarlas).
-6. **Login de personal:** Las pantallas de Cocina y Mostrador piden una contraseña compartida por rol. Por defecto en desarrollo: `cocina123` (cocina) y `mostrador123` (mostrador). Para un despliegue real, sobreescribilas con las variables de entorno `KITCHEN_PASSWORD` y `COUNTER_PASSWORD` al levantar el backend. Las sesiones no vencen solas: se cierran con "Salir", con "Cerrar Otras Sesiones" en el Mostrador (tablet perdida, alguien que dejó de trabajar) o al reiniciar el backend, que es lo que pasa al cambiar las contraseñas. Tras 5 contraseñas incorrectas desde la misma IP, el login se bloquea 15 minutos.
+## 🛠️ Stack
+
+| Capa | Tecnologías |
+| --- | --- |
+| Frontend | React 19, Vite, Socket.io Client, CSS propio (sin framework), Lucide Icons, qrcode.react |
+| Backend | Node.js 22 (ES Modules), Express 4, Socket.io 4 |
+| Persistencia | SQLite embebido con el módulo nativo `node:sqlite` (sin dependencias nativas) |
+| Testing | `node:test` (unit tests), Playwright (E2E) |
+| Calidad | ESLint (reglas de React Hooks) |
+| Despliegue | Un único servicio Node que sirve la API, los WebSockets y el build del frontend |
+
+## 📁 Estructura
+
+```
+backend/
+  server.js       Express + Socket.io: endpoints, eventos y salas
+  domain.js       Reglas de negocio (mesas, pedidos, validaciones)
+  auth.js         Sesiones de personal y freno de intentos de login
+  db.js           Esquema SQLite, migraciones y queries
+  *.test.js       Unit tests
+frontend/src/
+  components/     ClientView, KitchenView, CounterView, StaffLogin, TableQrModal
+  hooks/          useSocketRoom, useStaffAuth
+tests/            Specs E2E de Playwright
+```
+
+## 💻 Correr en local
+
+**Requisito:** [Node.js](https://nodejs.org/) **22.13 o superior** (por `node:sqlite`).
+
+```bash
+# Backend (puerto 3001)
+cd backend && npm install && npm run dev
+
+# Frontend (puerto 5173), en otra terminal
+cd frontend && npm install && npm run dev
+```
+
+1. Abrí `http://localhost:5173/`. El portal tiene links a la cocina, al mostrador y a cada mesa.
+2. **Login de personal** (contraseñas de desarrollo): `cocina123` para cocina y `mostrador123` para mostrador.
+3. En el Mostrador, tocá **"Iniciar Día"** para habilitar las mesas.
+4. **Desde un celular en la misma red:** abrí la dirección "Network" que muestra Vite, con el link de la mesa (sale del botón de QR en el Mostrador). El frontend deduce solo la dirección del backend; si vive en otro host, usá `VITE_BACKEND_URL`. La primera vez, Windows puede pedir permiso de firewall para Node.
 
 ## 🧪 Tests
 
-- **Unit tests** de las reglas de negocio y de las sesiones (`backend/*.test.js`, con `node:test`, sin levantar nada): `npm test --prefix backend` (o `npm run test:unit` desde la raíz).
-- **E2E** (Playwright, en `tests/`): con el backend y el frontend corriendo en modo desarrollo, `npx playwright test` desde la raíz. Arrancan con `/api/test/reset`, que **borra la base**: para no perder tu estado local, levantá el backend con `DB_PATH` apuntando a una base aparte.
+```bash
+npm run test:unit        # 32 unit tests del dominio y las sesiones (node:test)
+npx playwright test      # 22 tests E2E (requiere backend y frontend corriendo en dev)
+```
+
+Los E2E cubren los flujos completos (pedido → cocina → cobro), la reconexión con pedidos en vuelo, el ciclo del día y la seguridad del transporte (tokens de mesa, roles, validación de payloads). Arrancan con `/api/test/reset`, que **borra la base**: para conservar tu estado local, levantá el backend con `DB_PATH` apuntando a otro archivo.
 
 ## ☁️ Despliegue
 
-En producción todo corre como un solo servicio: el backend sirve el build del frontend en el mismo origen. Funciona en cualquier hosting con procesos Node persistentes y WebSockets (Render, Railway, Fly.io); no en funciones serverless.
+En producción todo corre como un solo servicio: el backend sirve el build del frontend en el mismo origen. Funciona en hostings con procesos Node persistentes y WebSockets (Render, Railway, Fly.io), no en funciones serverless.
 
 ```bash
 npm run build   # instala dependencias y compila el frontend
@@ -75,13 +128,14 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 
 | Variable | Uso |
 | --- | --- |
-| `DEV_MODE=1` | Solo desarrollo (lo setea `npm run dev` vía `backend/.env.development`): habilita los endpoints de test, las contraseñas por defecto y el CORS abierto. **Nunca en un despliegue.** Sin esta variable el server arranca seguro por defecto. |
-| `KITCHEN_PASSWORD` / `COUNTER_PASSWORD` | Contraseñas del personal. Obligatorias salvo con `DEV_MODE=1` o `DEMO_MODE=1`: sin ellas el server no arranca. |
-| `TRUST_PROXY` | Cantidad de proxies delante del server (normalmente `1` en Render, Railway o Fly.io). Necesario para que el freno de intentos de login distinga a cada cliente por su IP real. |
-| `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica (con las mesas habilitadas) tras un rato sin uso. |
+| `KITCHEN_PASSWORD` / `COUNTER_PASSWORD` | Contraseñas del personal. Obligatorias salvo con `DEV_MODE=1` o `DEMO_MODE=1`. |
+| `TRUST_PROXY` | Cantidad de proxies delante del server (normalmente `1`), para que el freno de login vea la IP real. |
+| `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica tras un rato sin uso. |
 | `DEMO_IDLE_MINUTES` | Minutos sin actividad antes de reiniciar la demo (por defecto 30). |
-| `DB_PATH` | Ruta del archivo SQLite. En modo demo puede vivir en un disco efímero. |
+| `DB_PATH` | Ruta del archivo SQLite. |
 | `CORS_ORIGIN` | Solo si el frontend se publica en otro dominio (junto con `VITE_BACKEND_URL` al compilarlo). |
+| `DEV_MODE=1` | Solo desarrollo (lo setea `npm run dev`): endpoints de test, contraseñas por defecto y CORS abierto. **Nunca en un despliegue.** |
 
-## 📝 Licencia
-Este proyecto es parte del portfolio de desarrollo de [peri294](https://github.com/peri294).
+## 👤 Autor
+
+Desarrollado por [peri294](https://github.com/peri294) como proyecto de portfolio.
