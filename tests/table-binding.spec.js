@@ -54,9 +54,12 @@ test('sin el token del QR no se entra a la mesa, y una mesa no puede actuar sobr
   await settle();
   expect(spied).toEqual([]);
 
-  // 4. La cocina no recibe los tokens: solo el mostrador los necesita para mostrar los QR
+  // 4. La cocina no recibe las mesas (ni sus tokens), la caja ni los llamados al mozo:
+  // solo los pedidos que tiene que preparar
   const kitchenState = await fetchState(await login('kitchen', 'cocina123'));
-  expect(kitchenState.tables.every(t => t.qrToken === undefined)).toBe(true);
+  expect(Object.keys(kitchenState)).toEqual(['orders']);
+  const order31 = await created31;
+  expect(kitchenState.orders.some(o => o.id === order31.id)).toBe(true);
   expect((await tableOf('30')).qrToken).toBe(await tableToken('30'));
 
   [intruder, client30, client31, counter.socket].forEach(s => s.close());

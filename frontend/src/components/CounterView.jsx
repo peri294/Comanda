@@ -203,6 +203,14 @@ export default function CounterView({ socket, token, onLogout }) {
   // Close table and process payment (la caja del día la actualiza el server
   // vía daily-sales-updated, acá no se suma nada localmente)
   const handleCloseTable = (tableId) => {
+    // Cobrar da por entregado todo lo de la mesa: lo que cocina no sirvió todavía
+    // desaparece de su monitor (el server le avisa), así que se confirma antes.
+    const inKitchen = activeOrders.filter(o => o.tableId === tableId && o.status !== 'entregado' && !o.archived);
+    if (inKitchen.length > 0 && !window.confirm(
+      `La Mesa ${tableId} tiene ${inKitchen.length === 1 ? '1 pedido que cocina todavía no entregó' : `${inKitchen.length} pedidos que cocina todavía no entregó`}. ` +
+      'Si cobrás ahora, se dan por entregados y cocina deja de verlos. ¿Cobrar igual?'
+    )) return;
+
     socket.emit('close-table', { tableId });
 
     // Clear details modal if open

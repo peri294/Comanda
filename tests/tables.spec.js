@@ -44,9 +44,15 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   // 3. UNA MESA OCUPADA NO SE PUEDE QUITAR (el botón de baja solo existe en mesas libres)
   await expect(mesa13.getByTitle('Dar de baja la Mesa 13')).toHaveCount(0);
 
-  // 4. COBRAR Y CERRAR LA MESA PARA LIBERARLA
+  // 4. COBRAR Y CERRAR LA MESA PARA LIBERARLA. El pedido sigue en cocina: el mostrador
+  // pide confirmación antes de darlo por entregado
   await mesa13.getByRole('button', { name: /detalles/i }).click();
-  await counterPage.getByRole('button', { name: /confirmar cobro y cerrar mesa/i }).click();
+  const closeDialog = counterPage.waitForEvent('dialog');
+  const confirmClick = counterPage.getByRole('button', { name: /confirmar cobro y cerrar mesa/i }).click();
+  const dialog = await closeDialog;
+  expect(dialog.message()).toContain('1 pedido que cocina todavía no entregó');
+  await dialog.accept();
+  await confirmClick;
   await expect(mesa13.getByText('Mesa vacía')).toBeVisible({ timeout: 10000 });
   // Al cobrar, el server desconecta los celulares de la mesa: la visita terminó
   await expect(clientPage.getByText('¡Gracias por tu visita!')).toBeVisible({ timeout: 10000 });

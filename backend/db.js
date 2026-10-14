@@ -313,6 +313,18 @@ export const closeRegister = () => {
   return { closedAt, total, ordersCount };
 };
 
+// Solo para los tests E2E: hace que SQLite rechace toda escritura en la tabla `orders`
+// (o la vuelve a permitir), para probar qué pasa cuando una escritura falla. Es un
+// trigger TEMP: vive en esta conexión y desaparece al reiniciar el server.
+export const setOrderWritesFailing = (failing) => {
+  db.exec('DROP TRIGGER IF EXISTS temp.fail_order_insert; DROP TRIGGER IF EXISTS temp.fail_order_update;');
+  if (!failing) return;
+  db.exec(`
+    CREATE TEMP TRIGGER fail_order_insert BEFORE INSERT ON main.orders BEGIN SELECT RAISE(ABORT, 'escritura forzada a fallar'); END;
+    CREATE TEMP TRIGGER fail_order_update BEFORE UPDATE ON main.orders BEGIN SELECT RAISE(ABORT, 'escritura forzada a fallar'); END;
+  `);
+};
+
 // Solo para /api/test/reset y el reset de la demo pública: vuelve la base al estado de
 // primer arranque. Borra también el historial de pedidos archivados — aceptable porque
 // en un despliegue real (producción sin DEMO_MODE) no se llama nunca.

@@ -18,7 +18,8 @@ import {
   resetState,
   runInTransaction,
   getDailySalesTotal,
-  closeRegister
+  closeRegister,
+  setOrderWritesFailing
 } from './db.js';
 import {
   newQrToken,
@@ -237,7 +238,27 @@ let menuCache = persistedState.menu;
 
 // Solicitudes de "Llamar al Mozo" activas, indexadas por mesa: { timestamp, resolved, resolvedAt }
 // (las reglas de duplicados y cooldown están en assistanceDecision, ver domain.js).
-const activeAssistanceRequests = persistedState.assistanceRequests;
+let activeAssistanceRequests = persistedState.assistanceRequests;
+
+// Los handlers mutan la memoria y después persisten: si la escritura falla, la
+// transacción vuelve atrás pero la memoria ya cambió, y el server seguiría mostrando
+// (y cobrando) un estado que la base no tiene. Como SQLite quedó en el último estado
+// confirmado, se rehace la memoria desde ahí. Los avisos a las pantallas salen después
+// de persistir, así que ninguna llegó a ver el estado descartado.
+const reloadFromDb = () => {
+  const state = loadState(initialTables(), DEFAULT_MENU);
+  tables = state.tables;
+  orders = state.orders;
+  menuCache = state.menu;
+  activeAssistanceRequests = state.assistanceRequests;
+};
+
+// Los pedidos archivados (mesa cobrada o pedido cancelado) quedan en SQLite como
+// historial y salen de la memoria apenas se persisten, igual que no se cargan al
+// arrancar: si no, el array crecía con cada pedido del día.
+const pruneArchivedOrders = () => {
+  orders = orders.filter(o => !o.archived);
+};
 
 // --- HELPERS ---
 
@@ -324,6 +345,7 @@ const applyCounterCorrection = (order) => {
     persistOrder(order);
     if (table) persistTable(table);
   });
+  pruneArchivedOrders();
 
   broadcastOrders();
   broadcastTables();
@@ -371,14 +393,18 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-// Obtener estado inicial de mesas y pedidos activos (requiere sesión de personal)
+// Obtener estado inicial de mesas y pedidos activos (requiere sesión de personal).
+// Cocina recibe lo mismo que por la sala 'kitchen': solo los pedidos que tiene que
+// preparar. Las mesas (con sus tokens de QR), la caja y los llamados al mozo son del mostrador.
 app.get('/api/initial-state', requireStaffAuth, (req, res) => {
+  if (req.staffRole === 'kitchen') {
+    return res.json({ orders: orders.filter(isKitchenVisible) });
+  }
   res.json({
-    // Los tokens de QR solo los necesita el mostrador (para mostrar el link de cada mesa).
-    tables: req.staffRole === 'counter' ? tables : tables.map(({ qrToken, ...t }) => t),
-    // No incluye pedidos de mesas ya cerradas/cobradas. A diferencia del filtro de cocina
-    // (status !== 'entregado'), esto SÍ incluye pedidos ya servidos pero aún no pagados,
-    // que el mostrador necesita mostrar en el ticket. KitchenView aplica su propio filtro extra.
+    tables,
+    // No incluye pedidos de mesas ya cerradas/cobradas. A diferencia del filtro de cocina,
+    // esto SÍ incluye pedidos ya servidos pero aún no pagados, que el mostrador necesita
+    // mostrar en el ticket.
     orders: orders.filter(o => !o.archived),
     // Para que un mostrador que recién se loguea (o recargó la página) vea los llamados
     // que quedaron sin atender mientras no estaba conectado, no solo los que lleguen a partir de ahora.
@@ -417,7 +443,15 @@ if (DEV_MODE) {
     // Las conexiones atadas a mesas viejas pierden el acceso: cada reset genera tokens nuevos.
     // El menú también vuelve a la semilla: los specs de menú crean/borran productos
     // y los demás specs piden los productos por nombre esperando sus precios de fábrica.
+    setOrderWritesFailing(false);
     resetToSeed();
+    res.json({ ok: true });
+  });
+
+  // Hace fallar (o vuelve a permitir) las escrituras de pedidos en SQLite, para probar
+  // que el server se recupera de una escritura fallida (ver reloadFromDb).
+  app.post('/api/test/order-writes', (req, res) => {
+    setOrderWritesFailing(req.body?.failing === true);
     res.json({ ok: true });
   });
 }
@@ -463,20 +497,38 @@ io.on('connection', (socket) => {
   // Cualquier acción (no el join, que es solo mirar) cuenta como actividad de la demo.
   if (DEMO_MODE) socket.onAny((event) => { if (event !== 'join') markDemoActivity(); });
 
+  // Todos los handlers pasan por acá. Un error (típicamente una escritura en SQLite que
+  // falla) antes tiraba abajo el server, y si no lo hacía dejaba la memoria con cambios
+  // que la base no tiene: se rehace la memoria desde la base (ver reloadFromDb) y, si el
+  // evento esperaba respuesta, se le contesta que falló en vez de dejarlo esperando.
+  const on = (event, handler) =>
+    socket.on(event, (...args) => {
+      try {
+        handler(...args);
+      } catch (err) {
+        console.error(`Error en el evento ${event}; se recarga el estado desde la base:`, err);
+        reloadFromDb();
+        broadcastTables();
+        broadcastOrders();
+        const ack = args.at(-1);
+        if (typeof ack === 'function') ack({ ok: false, error: 'server_error' });
+      }
+    });
+
   // Evento de personal: se ignora si esta conexión no se unió con ese rol (join con
   // token). El token se revalida en cada evento: si se revocó después del join, la
   // conexión pierde el rol (antes lo conservaba hasta reconectarse).
   // El payload llega siempre como objeto (ver payloadOf): un emit con null de una
   // pantalla de personal tiraba abajo el server igual que desde una mesa.
   const staffOn = (role, event, handler) =>
-    socket.on(event, (data) => {
+    on(event, (data) => {
       if (hasStaffRole(socket, role)) handler(payloadOf(data));
       else if (socket.data.staffTokens?.[role]) expelFromRole(socket, role);
     });
 
   // Unirse a un rol/canal específico. 'kitchen' y 'counter' son canales de personal
   // y requieren un token de sesión válido; 'table-X' requiere el token del QR de la mesa.
-  socket.on('join', (data) => {
+  on('join', (data) => {
     const { role, token } = payloadOf(data);
     if (typeof role !== 'string') return;
 
@@ -530,7 +582,7 @@ io.on('connection', (socket) => {
   //
   // Responde por acknowledgement ({ ok } o { ok: false, error }): antes un rechazo era
   // silencioso y el cliente ya había vaciado el carrito creyendo que el pedido salió.
-  socket.on('new-order', (orderData, ack) => {
+  on('new-order', (orderData, ack) => {
     const reply = typeof ack === 'function' ? ack : () => {};
     // La mesa es la de la conexión, no el tableId del payload: antes, desde las devtools,
     // la mesa 3 podía pedir a nombre de la 7. También cubre las mesas dadas de baja: un
@@ -630,7 +682,7 @@ io.on('connection', (socket) => {
   });
 
   // Evento: Solicitar cierre de cuenta (desde Cliente)
-  socket.on('request-bill', (data) => {
+  on('request-bill', (data) => {
     const { paymentMethod } = payloadOf(data);
     const table = getSocketTable(socket);
     if (!table) return;
@@ -648,7 +700,7 @@ io.on('connection', (socket) => {
   // no se duplica un llamado sin atender ni se reabre dentro del cooldown (ver
   // assistanceDecision). Siempre responde assistance-ack al cliente que pidió: antes el rechazo por cooldown
   // era silencioso y la UI quedaba en "Mozo en camino..." 60s sin ningún llamado real.
-  socket.on('request-assistance', () => {
+  on('request-assistance', () => {
     const table = getSocketTable(socket);
     if (!table) return;
     // Con la mesa bloqueada (siempre vacía) un link filtrado no sirve para llamar al
@@ -772,6 +824,10 @@ io.on('connection', (socket) => {
     const tableIndex = tables.findIndex(t => t.id === tableId);
     if (tableIndex === -1) return;
 
+    // Pedidos que cocina todavía tiene en pantalla: al cobrar se dan por entregados y
+    // desaparecen de su monitor, así que se le avisa igual que con una cancelación (el
+    // Mostrador ya lo confirmó antes de cobrar).
+    const stillInKitchen = activeOrdersOf(tableId).filter(isKitchenVisible);
     // Solo los pedidos activos de la visita (ver closeOrders).
     const closedOrders = closeOrders(orders, tableId, new Date().toISOString());
     tables[tableIndex] = closedTable(tables[tableIndex]);
@@ -782,10 +838,12 @@ io.on('connection', (socket) => {
       persistTable(tables[tableIndex]);
       deleteAssistance(tableId);
     });
+    pruneArchivedOrders();
 
     // Notificar a mostrador, cocina y a la mesa correspondiente
     broadcastTables();
     broadcastOrders();
+    stillInKitchen.forEach(order => io.to('kitchen').emit('order-modified', { order, reason: 'closed' }));
     // El server es la única fuente de la caja: todos los mostradores conectados
     // reciben el total real (dos pestañas abiertas no divergen por sumas locales).
     io.to('counter').emit('daily-sales-updated', getDailySalesTotal());
@@ -865,7 +923,7 @@ io.on('connection', (socket) => {
     io.to('counter').emit('daily-sales-updated', getDailySalesTotal());
   });
 
-  socket.on('disconnect', () => {
+  on('disconnect', () => {
     console.log(`Cliente desconectado: ${socket.id}`);
   });
 });
