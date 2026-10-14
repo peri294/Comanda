@@ -43,3 +43,4 @@ debug-*.png
 .claude/
 .agents/
 .hermes/
+AGENTS.md
