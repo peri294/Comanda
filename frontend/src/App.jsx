@@ -176,28 +176,32 @@ export default function App() {
         </div>
 
         <div className="header-actions">
-          {/* Connection Status Badge */}
-          <span
-            className="badge header-status"
-            role="status"
-            aria-label={isConnected ? 'Servidor conectado' : 'Sin conexión'}
-            style={{ 
-              background: isConnected ? 'rgba(96, 180, 123, 0.12)' : 'rgba(231, 111, 81, 0.12)',
-              color: isConnected ? 'var(--success)' : 'var(--danger)',
-              border: `1px solid ${isConnected ? 'rgba(96, 180, 123, 0.3)' : 'rgba(231, 111, 81, 0.3)'}`,
-              fontSize: '0.8rem'
-            }}
-          >
-            <span style={{ 
-              width: '6px', 
-              height: '6px', 
-              borderRadius: '50%', 
-              background: isConnected ? 'var(--success)' : 'var(--danger)',
-              display: 'inline-block',
-              flexShrink: 0
-            }} />
-            <span className="header-status-text">{isConnected ? 'Servidor Conectado' : 'Sin Conexión'}</span>
-          </span>
+          {/* Aviso de conexión: solo cuando se corta. Con conexión no hay nada que avisar,
+              y sin ella el personal y los clientes tienen que saber que los pedidos y
+              cambios no están llegando. */}
+          {!isConnected && (
+            <span
+              className="badge header-status"
+              role="status"
+              aria-label="Sin conexión"
+              style={{
+                background: 'rgba(231, 111, 81, 0.12)',
+                color: 'var(--danger)',
+                border: '1px solid rgba(231, 111, 81, 0.3)',
+                fontSize: '0.8rem'
+              }}
+            >
+              <span style={{
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                background: 'var(--danger)',
+                display: 'inline-block',
+                flexShrink: 0
+              }} />
+              <span className="header-status-text">Sin Conexión</span>
+            </span>
+          )}
 
           {canLeaveView && (
             <button 

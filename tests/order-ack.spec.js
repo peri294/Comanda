@@ -68,7 +68,8 @@ test('sin conexión el pedido no se pierde: el carrito se conserva y se reenvía
   // Vuelve la señal: el reenvío llega una sola vez (antes el evento quedaba en el buffer,
   // salía antes del join a la mesa y el server lo descartaba)
   await page.evaluate(() => window.__socket.connect());
-  await expect(page.getByText('Servidor Conectado')).toBeVisible({ timeout: 10000 });
+  // El aviso de "Sin Conexión" del header desaparece al reconectar
+  await expect(page.getByRole('status', { name: 'Sin conexión' })).toHaveCount(0, { timeout: 10000 });
   await page.getByRole('button', { name: /confirmar y enviar pedido/i }).click();
   await expect(page.getByText('Pedido Recibido')).toBeVisible({ timeout: 10000 });
   await expect(page.locator('.cart-float-btn')).toHaveCount(0);
