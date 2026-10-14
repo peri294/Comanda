@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch --env-file=.env.development server.js",
+    "dev": "node --watch --env-file=.env.development --env-file-if-exists=.env.local server.js",
     "test": "node --test"
   },
   "dependencies": {

@@ -46,3 +46,24 @@ export const uploadImage = async (file, token, preset = IMAGE_PRESETS.photo) => 
   if (!res.ok) throw new Error('No se pudo subir la imagen. Probá con otra.');
   return (await res.json()).id;
 };
+
+// Imagen en base64 (la que devuelve la generación con IA) como File, para pasarla por el
+// mismo camino que una foto elegida a mano (uploadImage).
+export const base64ToFile = (base64, mime, name = 'imagen-ia') => {
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  return new File([bytes], name, { type: mime });
+};
+
+// Pide al server una foto generada con IA para un producto. No guarda nada: devuelve
+// { mime, data } para mostrar la vista previa. Si falla, tira un Error con el mensaje del
+// server (cuota agotada, prompt bloqueado, sin servicio configurado...).
+export const generateProductImage = async ({ name, description, category }, token) => {
+  const res = await fetch(`${BACKEND_URL}/api/images/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name, description, category })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || 'No se pudo generar la imagen. Probá de nuevo.');
+  return body;
+};

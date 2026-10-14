@@ -40,6 +40,7 @@ En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → 
 - **Cortes de conexión a la vista:** sin conexión, el cliente ve que tiene que pedir ayuda al mozo, y las pantallas del personal se pausan (nada que se toque se pierde en silencio) y se rehidratan solas al volver.
 - **Persistencia write-through en SQLite:** el estado de trabajo vive en memoria y cada cambio se escribe en disco de forma sincrónica (WAL, prepared statements, migraciones de esquema). Mesas, pedidos y caja sobreviven a un reinicio del server.
 - **Menú administrable:** categorías propias, productos con foto, precios y stock ("Agotado") se editan desde el Mostrador y los clientes ven el cambio sin recargar. Las fotos se achican en el navegador y se guardan en la misma base.
+- **Imágenes con IA (opcional):** un producto sin foto puede tener una imagen generada a partir de su nombre y su descripción, con vista previa antes de publicarla. Funciona con Cloudflare Workers AI (cuota diaria gratuita) o Google Gemini, a elección de cada local.
 - **Reportes de ventas:** total, ticket promedio por mesa, ventas por día, productos más vendidos y cierres de caja de cualquier período, exportables a CSV.
 - **Listo para un local real:** nombre y logo configurables, pantalla de inicio solo para el personal en producción, copia de seguridad descargable y [guía de instalación](docs/INSTALACION.md).
 - **Ciclo del día:** las mesas arrancan bloqueadas; "Iniciar Día" las habilita y "Cerrar Día" las bloquea, respetando las que todavía tienen clientes (se bloquean al cobrarlas).
@@ -131,8 +132,8 @@ cd frontend && npm install && npm run dev
 ##  Tests
 
 ```bash
-npm run test:unit        # 58 unit tests del dominio y las sesiones (node:test)
-npx playwright test      # 37 tests E2E (requiere backend y frontend corriendo en dev)
+npm run test:unit        # 71 unit tests del dominio y las sesiones (node:test)
+npx playwright test      # 40 tests E2E (requiere backend y frontend corriendo en dev)
 ```
 
 Los E2E cubren los flujos completos (pedido → cocina → cobro → reportes), la reconexión con pedidos en vuelo, el ciclo del día, el menú con fotos y la seguridad del transporte (tokens y códigos de mesa, roles, validación de payloads). En cada push, [GitHub Actions](.github/workflows/ci.yml) corre los unit tests, el lint, el build y la suite E2E completa. Los E2E arrancan con `/api/test/reset`, que **borra la base**: para conservar tu estado local, levantá el backend con `DB_PATH` apuntando a otro archivo.
@@ -157,6 +158,8 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 | `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica tras un rato sin uso. |
 | `DEMO_IDLE_MINUTES` | Minutos sin actividad antes de reiniciar la demo (por defecto 30). |
 | `DB_PATH` | Ruta del archivo SQLite (en un disco persistente). |
+| `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | Opcional: imágenes de productos con IA vía Cloudflare Workers AI (cuota diaria gratuita). |
+| `GEMINI_API_KEY` / `GEMINI_IMAGE_MODEL` | Opcional: imágenes de productos con IA vía Google Gemini (pago por imagen). Con ambos configurados, `IMAGE_AI_PROVIDER` elige. |
 | `TZ` | Zona horaria del local (por ejemplo `America/Argentina/Buenos_Aires`): define los días de la caja y los reportes. |
 | `CORS_ORIGIN` | Solo si el frontend se publica en otro dominio (junto con `VITE_BACKEND_URL` al compilarlo). |
 | `DEV_MODE=1` | Solo desarrollo (lo setea `npm run dev`): endpoints de test, contraseñas por defecto y CORS abierto. **Nunca en un despliegue.** |

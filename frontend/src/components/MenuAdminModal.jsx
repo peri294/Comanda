@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { BookOpen, X, Pencil, Trash2, ArrowUp, ArrowDown, ImagePlus, Plus } from 'lucide-react';
+import { BookOpen, X, Pencil, Trash2, ArrowUp, ArrowDown, ImagePlus, Plus, Sparkles } from 'lucide-react';
 import { formatPrice } from '../utils/format';
-import { uploadImage } from '../utils/images';
+import { uploadImage, base64ToFile, generateProductImage } from '../utils/images';
 import { imageUrl } from '../config';
 
 const inputStyle = {
@@ -21,16 +21,19 @@ const iconButtonStyle = { padding: '6px 10px' };
 const dangerButtonStyle = { ...iconButtonStyle, color: 'var(--danger)', borderColor: 'rgba(231, 111, 81, 0.3)' };
 
 // imageId: undefined = sin cambios, null = sacar la foto, string = foto nueva ya subida.
-const emptyProductForm = { id: null, name: '', description: '', price: '', category: '', imageId: undefined, previewUrl: null };
+// aiPreview: imagen generada con IA que todavía no se aceptó ({ mime, data } en base64).
+const emptyProductForm = { id: null, name: '', description: '', price: '', category: '', imageId: undefined, previewUrl: null, aiPreview: null };
 const emptyCategoryForm = { id: null, name: '', icon: '' };
 
 // Administración del menú desde el Mostrador: productos (con foto) y categorías.
 // Todas las mutaciones van por sockets protegidos con rol counter; el estado no se toca
 // acá: la única fuente son los broadcasts menu-updated y categories-updated del server.
-export default function MenuAdminModal({ socket, token, menu, categories, onClose }) {
+// imageGeneration: el server tiene un servicio de imágenes con IA configurado.
+export default function MenuAdminModal({ socket, token, menu, categories, imageGeneration, onClose }) {
   const [productForm, setProductForm] = useState(emptyProductForm);
   const [categoryForm, setCategoryForm] = useState(emptyCategoryForm);
   const [uploading, setUploading] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
 
   const categoryName = (id) => categories.find(c => c.id === id)?.name || 'Sin categoría';
@@ -53,7 +56,8 @@ export default function MenuAdminModal({ socket, token, menu, categories, onClos
       price: String(item.price),
       category: item.category,
       imageId: undefined,
-      previewUrl: null
+      previewUrl: null,
+      aiPreview: null
     });
   };
 
@@ -66,6 +70,41 @@ export default function MenuAdminModal({ socket, token, menu, categories, onClos
     try {
       const id = await uploadImage(file, token);
       setProductForm(f => ({ ...f, imageId: id, previewUrl: imageUrl(id) }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Imagen con IA a partir del nombre, la descripción y la categoría del formulario. Queda
+  // como vista previa: no se guarda nada hasta "Usar esta imagen" (y "Guardar Cambios").
+  const generatePhoto = async () => {
+    const name = productForm.name.trim();
+    if (!name) {
+      setError('Escribí el nombre del producto para generar la imagen.');
+      return;
+    }
+    setError('');
+    setGenerating(true);
+    try {
+      const image = await generateProductImage({ name, description: productForm.description.trim(), category: formCategory }, token);
+      setProductForm(f => ({ ...f, aiPreview: image }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  // Aceptada: pasa por el mismo camino que una foto elegida a mano (se achica y se sube).
+  const acceptGeneratedPhoto = async () => {
+    const { mime, data } = productForm.aiPreview;
+    setError('');
+    setUploading(true);
+    try {
+      const id = await uploadImage(base64ToFile(data, mime), token);
+      setProductForm(f => ({ ...f, imageId: id, previewUrl: imageUrl(id), aiPreview: null }));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -180,7 +219,8 @@ export default function MenuAdminModal({ socket, token, menu, categories, onClos
           </div>
           <div style={{ display: 'flex', gap: '10px' }}>
             <input
-              placeholder="Descripción (opcional)"
+              placeholder={imageGeneration ? 'Descripción (opcional; mejora la imagen con IA)' : 'Descripción (opcional)'}
+              aria-label="Descripción del producto"
               value={productForm.description}
               onChange={(e) => setProductForm(f => ({ ...f, description: e.target.value }))}
               style={{ ...inputStyle, flex: 2 }}
@@ -210,9 +250,39 @@ export default function MenuAdminModal({ socket, token, menu, categories, onClos
                 Quitar foto
               </button>
             )}
+            {/* Solo para productos sin foto: si ya tiene una, se cambia a mano */}
+            {imageGeneration && !productPhotoUrl && !productForm.aiPreview && (
+              <button type="button" className="btn-secondary" style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                onClick={generatePhoto} disabled={generating || uploading}>
+                <Sparkles size={14} /> {generating ? 'Generando imagen…' : 'Generar con IA'}
+              </button>
+            )}
           </div>
+          {productForm.aiPreview && (
+            <div className="ai-preview" style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <img
+                src={`data:${productForm.aiPreview.mime};base64,${productForm.aiPreview.data}`}
+                alt="Imagen generada con IA"
+                style={{ width: '120px', height: '90px', objectFit: 'cover', borderRadius: '8px' }}
+              />
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button type="button" className="btn-primary" style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                  onClick={acceptGeneratedPhoto} disabled={uploading}>
+                  {uploading ? 'Guardando…' : 'Usar esta imagen'}
+                </button>
+                <button type="button" className="btn-secondary" style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                  onClick={generatePhoto} disabled={generating || uploading}>
+                  {generating ? 'Generando…' : 'Generar otra'}
+                </button>
+                <button type="button" className="btn-secondary" style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                  onClick={() => setProductForm(f => ({ ...f, aiPreview: null }))} disabled={uploading}>
+                  Descartar
+                </button>
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '10px' }}>
-            <button type="submit" className="btn-primary" disabled={uploading} style={{ flex: 1, padding: '10px', fontSize: '0.9rem' }}>
+            <button type="submit" className="btn-primary" disabled={uploading || generating} style={{ flex: 1, padding: '10px', fontSize: '0.9rem' }}>
               {productForm.id ? 'Guardar Cambios' : 'Agregar Producto'}
             </button>
             {productForm.id && (

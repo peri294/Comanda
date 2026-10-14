@@ -46,7 +46,7 @@ const playNotificationSound = (type = 'success') => {
   }
 };
 
-export default function CounterView({ socket, token, onLogout, businessName, logoUrl }) {
+export default function CounterView({ socket, token, onLogout, businessName, logoUrl, imageGeneration }) {
   const [tables, setTables] = useState([]);
   const [activeOrders, setActiveOrders] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -677,6 +677,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
           token={token}
           menu={menu}
           categories={categories}
+          imageGeneration={imageGeneration}
           onClose={() => setIsMenuAdminOpen(false)}
         />
       )}

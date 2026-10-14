@@ -461,3 +461,22 @@ export const buildSalesReport = ({ days, paidOrders, cancelledCount = 0, closure
     closures
   };
 };
+
+// --- IMÁGENES CON IA ---
+
+// Prompt para generar la foto de un producto que no tiene una (ver imageAI.js). En inglés,
+// porque los modelos de imagen rinden mejor así; el nombre y la descripción van tal cual
+// (ya vienen recortados por los topes del menú). Se pide una foto de producto realista y
+// sin texto: un cartel o un logo inventado en la foto confundiría al cliente.
+export const buildProductImagePrompt = ({ name, description, categoryName } = {}) => {
+  const clean = (text) => (typeof text === 'string' ? text.trim().replace(/\s+/g, ' ') : '');
+  const parts = [
+    `Professional food photography for a coffee shop menu: ${clean(name)}.`,
+    clean(description) && `Description: ${clean(description)}.`,
+    clean(categoryName) && `Menu category: ${clean(categoryName)}.`,
+    'Served on a real plate or in a real cup on a cafe table, appetizing, natural soft light,',
+    'shallow depth of field, neutral background, centered, realistic photo.',
+    'No text, no letters, no logos, no watermarks, no people, no hands.'
+  ];
+  return parts.filter(Boolean).join(' ');
+};

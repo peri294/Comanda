@@ -45,7 +45,9 @@ jobs:
       # Backend en modo desarrollo (endpoints de test) y frontend con Vite, como en local
       - name: Levantar backend y frontend
         run: |
-          (cd backend && node --env-file=.env.development server.js > ../backend.log 2>&1 &)
+          # IMAGE_AI_PROVIDER=fake: la generación de imágenes con IA devuelve una imagen fija,
+          # sin llamar a ningún proveedor real (ver backend/imageAI.js).
+          (cd backend && IMAGE_AI_PROVIDER=fake node --env-file=.env.development server.js > ../backend.log 2>&1 &)
           (cd frontend && npx vite --port 5173 --strictPort > ../frontend.log 2>&1 &)
           for url in http://localhost:3001/api/menu http://localhost:5173; do
             for i in $(seq 1 30); do curl -sf "$url" > /dev/null && break; sleep 1; done

@@ -66,9 +66,13 @@ import {
   orderRateDecision,
   MAX_TABLES,
   MAX_MENU_ITEMS,
-  MAX_CATEGORIES
+  MAX_CATEGORIES,
+  MAX_PRODUCT_NAME_LENGTH,
+  MAX_PRODUCT_DESCRIPTION_LENGTH,
+  buildProductImagePrompt
 } from './domain.js';
 import { passwordMatches, createSessionStore, createLoginThrottle, throttleKeyForIp } from './auth.js';
+import { generateProductImage, resolveProvider, ImageAIError } from './imageAI.js';
 
 // Seguro por defecto: lo que solo sirve para desarrollar (endpoints de test que borran
 // la base, contraseñas por defecto, CORS abierto) existe únicamente con DEV_MODE=1, que
@@ -536,6 +540,51 @@ app.post('/api/images', requireRole('counter'), express.json({ limit: '400kb' })
   res.status(201).json({ id, url: imageUrl(id) });
 });
 
+// Generación de la foto de un producto con IA (solo el mostrador). Devuelve la imagen al
+// navegador sin guardarla: el encargado la revisa y, si la acepta, se sube como cualquier
+// foto (POST /api/images), así que las descartadas no dejan nada en la base.
+// Freno de costo: hasta 30 imágenes por hora para todo el local (Gemini cobra por imagen
+// y la cuota gratuita de Cloudflare es diaria).
+const newImageAIThrottle = () => createLoginThrottle({ maxFailures: 30, windowMs: 60 * 60_000 });
+let imageAIThrottle = newImageAIThrottle();
+const IMAGE_AI_ERRORS = {
+  not_configured: [503, 'No hay un servicio de imágenes con IA configurado.'],
+  blocked: [422, 'El servicio no generó una imagen para este producto. Probá con otra descripción.'],
+  quota_exceeded: [429, 'Se agotó la cuota del servicio de imágenes. Probá más tarde.'],
+  provider_error: [502, 'El servicio de imágenes no respondió. Probá de nuevo en un rato.']
+};
+app.post('/api/images/generate', requireRole('counter'), async (req, res) => {
+  const { name, description, category } = req.body || {};
+  const cleanName = typeof name === 'string' ? name.trim().slice(0, MAX_PRODUCT_NAME_LENGTH) : '';
+  if (!cleanName) return res.status(400).json({ error: 'Falta el nombre del producto' });
+
+  const limit = imageAIThrottle.check('image-ai');
+  if (!limit.allowed) {
+    res.set('Retry-After', String(Math.ceil(limit.retryAfterMs / 1000)));
+    return res.status(429).json({ error: `Se alcanzó el tope de imágenes por hora. Probá de nuevo en ${Math.ceil(limit.retryAfterMs / 60_000)} min.` });
+  }
+  imageAIThrottle.fail('image-ai');
+
+  const prompt = buildProductImagePrompt({
+    name: cleanName,
+    description: typeof description === 'string' ? description.slice(0, MAX_PRODUCT_DESCRIPTION_LENGTH) : '',
+    categoryName: categoriesCache.find(c => c.id === category)?.name
+  });
+  try {
+    res.json(await generateProductImage(prompt));
+  } catch (err) {
+    // Express 4 no atrapa los errores de un handler async: se responde acá.
+    if (!(err instanceof ImageAIError)) {
+      console.error('Error inesperado al generar una imagen:', err);
+      return res.status(500).json({ error: 'Error interno' });
+    }
+    // Solo el motivo: el mensaje del proveedor puede traer datos de la cuenta.
+    console.error(`Generación de imagen fallida: ${err.reason}`);
+    const [status, message] = IMAGE_AI_ERRORS[err.reason] || IMAGE_AI_ERRORS.provider_error;
+    res.status(status).json({ error: message, reason: err.reason });
+  }
+});
+
 // Las imágenes no cambian nunca (una foto nueva es un id nuevo): se cachean para siempre.
 app.get('/api/images/:id', (req, res) => {
   const image = isImageId(req.params.id) && getImage(req.params.id);
@@ -676,6 +725,7 @@ if (DEV_MODE) {
     visitCodeThrottle = newVisitCodeThrottle();
     previousVisitCodes.clear();
     recentOrdersByTable.clear();
+    imageAIThrottle = newImageAIThrottle();
     // Las sesiones de corridas anteriores no le sirven a nadie: cada corrida arranca sin ellas.
     sessions.revokeAllExcept(null);
     expelStaleStaff();
@@ -727,6 +777,9 @@ app.get('/api/config', (req, res) => {
   res.json({
     mode: APP_MODE,
     ...publicSettings(),
+    // Hay un proveedor de imágenes con IA configurado (ver imageAI.js): el Mostrador
+    // muestra el botón "Generar con IA" solo si es true.
+    imageGeneration: Boolean(resolveProvider()),
     ...(DEMO_MODE && { credentials: ROLE_PASSWORDS, idleResetMinutes: DEMO_IDLE_MINUTES })
   });
 });

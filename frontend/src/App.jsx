@@ -269,7 +269,7 @@ export default function App() {
         {view === 'counter' && (
           counterAuth.token ? (
             <fieldset className="staff-view" disabled={!isConnected}>
-              <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} businessName={businessName} logoUrl={logoUrl} />
+              <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} businessName={businessName} logoUrl={logoUrl} imageGeneration={Boolean(appConfig?.imageGeneration)} />
             </fieldset>
           ) : (
             <StaffLogin role="counter" onLogin={counterAuth.login} error={counterAuth.error} loading={counterAuth.loading} demoPassword={demoCredentials?.counter} />

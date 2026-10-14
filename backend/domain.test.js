@@ -12,6 +12,7 @@ import {
   isVisitCode,
   closeOrders,
   sanitizeSettings,
+  buildProductImagePrompt,
   orderRateDecision,
   MAX_ITEM_QUANTITY,
   MAX_ORDER_LINES,
@@ -500,5 +501,21 @@ describe('topes de pedidos y menú', () => {
     assert.equal(blocked.allowed, false);
     assert.equal(blocked.retryInMs, ORDER_RATE_WINDOW_MS - 100);
     assert.equal(orderRateDecision(recent, now + ORDER_RATE_WINDOW_MS).allowed, true);
+  });
+});
+
+describe('buildProductImagePrompt', () => {
+  test('incluye nombre, descripción y categoría, y pide una foto sin texto', () => {
+    const prompt = buildProductImagePrompt({ name: ' Lemon Pie ', description: 'Tarta de limón\ncon merengue', categoryName: 'Pastelería' });
+    assert.match(prompt, /: Lemon Pie\./);
+    assert.match(prompt, /Description: Tarta de limón con merengue\./);
+    assert.match(prompt, /Menu category: Pastelería\./);
+    assert.match(prompt, /No text/);
+  });
+
+  test('sin descripción ni categoría, no deja frases vacías', () => {
+    const prompt = buildProductImagePrompt({ name: 'Espresso' });
+    assert.doesNotMatch(prompt, /Description:|Menu category:/);
+    assert.doesNotMatch(prompt, /\s{2}/);
   });
 });

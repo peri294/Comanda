@@ -100,7 +100,33 @@ Ante una tablet perdida o alguien que dejó de trabajar, "Cerrar Otras Sesiones"
 
 ---
 
-## 6. Copias de seguridad
+## 6. Imágenes con IA (opcional)
+
+Un producto sin foto puede tener una imagen generada con IA a partir de su nombre y su descripción. En Administrar Menú, al crear o editar un producto sin foto, aparece **"Generar con IA"**: se ve una vista previa y se elige usarla, generar otra o descartarla. Nada se publica sin revisar. Cuanto mejor la descripción, mejor la imagen.
+
+Hace falta configurar **uno** de estos dos servicios. Sin ninguno, el botón no aparece.
+
+**Cloudflare Workers AI (gratis dentro de una cuota diaria)**
+
+1. Crear una cuenta gratuita en [Cloudflare](https://dash.cloudflare.com/sign-up).
+2. Copiar el **Account ID** (aparece en el panel, en *Workers AI* o en la barra lateral de la cuenta).
+3. Crear un **API Token** en *My Profile → API Tokens → Create Token*, con el permiso *Workers AI: Read* y *Workers AI: Edit* (o la plantilla "Workers AI").
+4. Configurar las variables `CLOUDFLARE_ACCOUNT_ID` y `CLOUDFLARE_API_TOKEN`.
+
+El plan gratuito incluye una cuota diaria que alcanza para del orden de cientos de imágenes por día; un menú se genera una sola vez. Usa el modelo FLUX.1 schnell.
+
+**Google Gemini (pago por imagen, mejor calidad)**
+
+1. Crear una clave en [Google AI Studio](https://aistudio.google.com/apikey), con la facturación activa en la cuenta de Google Cloud. La suscripción personal Google AI Pro **no** incluye el uso de la API.
+2. Configurar la variable `GEMINI_API_KEY`. Opcional: `GEMINI_IMAGE_MODEL` para cambiar el modelo (por defecto `gemini-3.1-flash-lite-image`).
+
+Cuesta unos US$0,034 por imagen (precio de Google al momento de escribir esta guía). Las imágenes de Google llevan la marca de agua invisible SynthID.
+
+**Con los dos configurados** se usa Cloudflare; `IMAGE_AI_PROVIDER=gemini` fuerza Gemini. Para cuidar el gasto, el server permite hasta 30 imágenes por hora para todo el local.
+
+---
+
+## 7. Copias de seguridad
 
 Todo vive en un solo archivo de base de datos: menú, fotos, mesas, pedidos, ventas y cierres de caja.
 
@@ -114,7 +140,7 @@ Todo vive en un solo archivo de base de datos: menú, fotos, mesas, pedidos, ven
 
 ---
 
-## 7. Actualizar a una versión nueva
+## 8. Actualizar a una versión nueva
 
 1. Descargar la copia de seguridad (por las dudas).
 2. Actualizar el código (`git pull`, o en Render un deploy nuevo).
@@ -124,7 +150,7 @@ La base se migra sola al arrancar: las columnas y tablas nuevas se agregan sin t
 
 ---
 
-## 8. Problemas frecuentes
+## 9. Problemas frecuentes
 
 | Síntoma | Causa probable |
 | --- | --- |
@@ -135,4 +161,6 @@ La base se migra sola al arrancar: las columnas y tablas nuevas se agregan sin t
 | "Demasiados intentos" al ingresar el código | Hubo 10 códigos incorrectos para esa mesa desde la misma conexión: esperar 15 minutos, o que el mozo verifique el código de la tarjeta. |
 | Las ventas de un día aparecen en otro | La zona horaria del server no es la del local: definir `TZ`. |
 | Las pantallas del personal vuelven al login | El server se reinició, o alguien usó "Cerrar Otras Sesiones". |
+| "No hay un servicio de imágenes con IA configurado" | Faltan las variables de Cloudflare o Gemini (sección 6), o el server no se reinició después de agregarlas. |
+| "Se agotó la cuota del servicio de imágenes" | Se usó la cuota diaria gratuita de Cloudflare o el saldo de Gemini. Probar al día siguiente, o subir la foto a mano. |
 | Aviso rojo "Sin conexión" y botones deshabilitados | Esa pantalla perdió el contacto con el server (WiFi o server caído). Se reconecta sola y se pone al día; mientras tanto no se puede tocar nada, para que ninguna acción se pierda. Los clientes ven que tienen que pedir ayuda al mozo. |
