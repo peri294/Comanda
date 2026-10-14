@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Coffee, ShoppingBag, X, Plus, Minus, CreditCard,
-  DollarSign, CheckCircle, Clock, ChefHat, Bell, Hand, Receipt, ChevronUp, ChevronDown
+  DollarSign, CheckCircle, Clock, ChefHat, Bell, Hand, Receipt, ChevronUp, ChevronDown, KeyRound
 } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
@@ -15,6 +15,19 @@ const ORDER_ERRORS = {
   table_unavailable: 'Tu mesa ya no está disponible. Escaneá de nuevo el QR de la mesa.',
   table_disabled: 'La mesa no está habilitada para pedir. Consultá al personal.',
   no_valid_items: 'Los productos del carrito ya no están disponibles.'
+};
+
+// Código de visita guardado por mesa y QR, para no pedirlo de nuevo al recargar. Si el
+// navegador no deja usar localStorage (modo privado estricto), se pide en cada carga.
+const visitCodeKey = (tableId, qrToken) => `comanda-visit:${tableId}:${qrToken}`;
+const readStoredCode = (tableId, qrToken) => {
+  try { return localStorage.getItem(visitCodeKey(tableId, qrToken)) || ''; } catch { return ''; }
+};
+const storeCode = (tableId, qrToken, code) => {
+  try {
+    if (code) localStorage.setItem(visitCodeKey(tableId, qrToken), code);
+    else localStorage.removeItem(visitCodeKey(tableId, qrToken));
+  } catch { /* sin almacenamiento: se vuelve a pedir al recargar */ }
 };
 
 // Mismo tope que el server (MAX_NOTES_LENGTH en server.js).
@@ -79,6 +92,19 @@ export default function ClientView({ tableId, qrToken, socket }) {
   // termina. Para volver a pedir hay que escanear el QR de nuevo (recargar la página).
   const [visitEnded, setVisitEnded] = useState(false);
 
+  // Código de la visita (lo da el mozo; en la demo viene en el link como ?c=). Sin el
+  // código vigente el server no deja entrar a la mesa y pide que se ingrese.
+  const [visitCode, setVisitCode] = useState(
+    () => new URLSearchParams(window.location.search).get('c') || readStoredCode(tableId, qrToken)
+  );
+  // Para el handler de table-state, que se registra una sola vez: guarda el código que el
+  // server acaba de aceptar.
+  const visitCodeRef = useRef(visitCode);
+  useEffect(() => { visitCodeRef.current = visitCode; }, [visitCode]);
+  const [needsCode, setNeedsCode] = useState(false);
+  const [codeInput, setCodeInput] = useState('');
+  const [codeError, setCodeError] = useState('');
+
   // Sincroniza catálogo y carrito con un menú nuevo (del fetch inicial, de un
   // menu-updated en vivo o del re-fetch tras reconectar): los items borrados o
   // agotados se sacan del carrito y los precios editados se actualizan, para no
@@ -116,7 +142,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
   // El token del QR viaja en el join: el server ata esta conexión a la mesa solo si es válido.
   // Con la visita terminada no se vuelve a unir, ni siquiera al reconectar el socket: si
   // no, un celular olvidado vería los pedidos del grupo siguiente tras un corte de red.
-  useSocketRoom(socket, tableId && !visitEnded ? `table-${tableId}` : null, qrToken);
+  useSocketRoom(socket, tableId && !visitEnded ? `table-${tableId}` : null, qrToken, visitCode);
 
   // Socket Connection and Event Listeners
   useEffect(() => {
@@ -126,6 +152,10 @@ export default function ClientView({ tableId, qrToken, socket }) {
       if (state) {
         setTableState(state);
         setTableUnavailable(false); // la mesa existe (o volvió a darse de alta)
+        // El server aceptó el código: se guarda para la próxima carga.
+        setNeedsCode(false);
+        setCodeError('');
+        storeCode(tableId, qrToken, visitCodeRef.current);
       } else {
         // El backend responde null si la mesa no existe o el token del QR no vale
         setTableUnavailable(true);
@@ -142,6 +172,26 @@ export default function ClientView({ tableId, qrToken, socket }) {
     socket.on('table-removed', () => {
       clearVisit();
       setTableUnavailable(true);
+    });
+
+    // El QR vale pero falta el código de la visita, o el mostrador lo cambió (changed): se
+    // pide de nuevo. El código guardado ya no sirve.
+    const askForCode = () => {
+      clearVisit();
+      setIsCartOpen(false);
+      setVisitCode('');
+      storeCode(tableId, qrToken, '');
+      setNeedsCode(true);
+    };
+    socket.on('visit-code-required', ({ changed } = {}) => {
+      if (changed) setCodeError('El código de la mesa cambió. Pedile el nuevo al personal.');
+      askForCode();
+    });
+    socket.on('visit-code-error', ({ retryAfterMs } = {}) => {
+      setCodeError(retryAfterMs
+        ? `Demasiados intentos. Probá de nuevo en ${Math.ceil(retryAfterMs / 60000)} min o pedile ayuda al personal.`
+        : 'Ese código no es el de la mesa. Revisalo y probá de nuevo.');
+      askForCode();
     });
 
     socket.on('order-status-changed', (order) => {
@@ -176,6 +226,8 @@ export default function ClientView({ tableId, qrToken, socket }) {
 
     return () => {
       socket.off('table-state');
+      socket.off('visit-code-required');
+      socket.off('visit-code-error');
       socket.off('table-removed');
       socket.off('order-status-changed');
       socket.off('table-closed');
@@ -183,7 +235,19 @@ export default function ClientView({ tableId, qrToken, socket }) {
       socket.off('assistance-ack');
       socket.off('menu-updated');
     };
-  }, [socket, tableId]);
+  }, [socket, tableId, qrToken]);
+
+  const submitCode = (e) => {
+    e.preventDefault();
+    const code = codeInput.trim();
+    if (!/^\d{4}$/.test(code)) {
+      setCodeError('El código tiene 4 números.');
+      return;
+    }
+    setCodeError('');
+    setCodeInput('');
+    setVisitCode(code);
+  };
 
   // Llamar al mozo. El botón se rehabilita cuando el mostrador confirma (assistance-resolved),
   // cuando el server rechaza por cooldown (assistance-ack) o, como último respaldo, a los
@@ -313,6 +377,34 @@ export default function ClientView({ tableId, qrToken, socket }) {
     );
   }
 
+  if (needsCode) {
+    return (
+      <div className="animate-fade-in" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '70vh' }}>
+        <form onSubmit={submitCode} className="glass-panel" style={{ padding: '40px', textAlign: 'center', maxWidth: '420px', width: '100%' }}>
+          <KeyRound size={48} style={{ color: 'var(--accent-gold)', margin: '0 auto 16px auto' }} />
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px' }}>Mesa {tableId}</h2>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '20px' }}>
+            Ingresá el código de 4 números de tu mesa. Te lo da el personal al sentarte.
+          </p>
+          <input
+            aria-label="Código de la mesa"
+            className="visit-code-input"
+            value={codeInput}
+            onChange={(e) => setCodeInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="••••"
+            autoFocus
+          />
+          {codeError && <p role="alert" style={{ color: 'var(--danger)', fontSize: '0.9rem', marginTop: '12px' }}>{codeError}</p>}
+          <button type="submit" className="btn-primary" style={{ width: '100%', marginTop: '20px', justifyContent: 'center' }} disabled={codeInput.length !== 4}>
+            Entrar a la mesa
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   // Mesa bloqueada por el Mostrador (antes de iniciar el día, después de cerrarlo o una
   // mesa puntual). Una mesa bloqueada siempre está vacía, así que no hay cuenta que mostrar.
   if (tableState.enabled === false) {
@@ -419,7 +511,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
               <Receipt size={16} style={{ color: 'var(--accent-gold)' }} /> Mi Cuenta Parcial
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
-              ${tableState.total} {showPartialBill ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              {formatPrice(tableState.total)} {showPartialBill ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </span>
           </button>
 
@@ -474,7 +566,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
               : 'Acércate al mostrador para realizar el pago con tu tarjeta de débito o crédito.'}
           </p>
           <div style={{ marginTop: '20px', fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-gold)' }}>
-            Total: ${tableState.total}
+            Total: {formatPrice(tableState.total)}
           </div>
           <p style={{ color: 'var(--text-secondary)', marginTop: '12px', fontSize: '0.9rem' }}>
             ¿Te olvidaste de algo? Podés seguir pidiendo, pero se cancela la solicitud de cuenta.

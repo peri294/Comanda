@@ -120,14 +120,16 @@ addColumnIfMissing('tables', 'qr_token', 'TEXT');
 addColumnIfMissing('tables', 'enabled', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('tables', 'block_on_close', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('menu', 'image_id', 'TEXT');
+// Mesas de una base anterior al código de visita: server.js les genera uno al arrancar.
+addColumnIfMissing('tables', 'visit_code', 'TEXT');
 // Los reportes y la caja filtran los pedidos cobrados por momento del cobro.
 db.exec('CREATE INDEX IF NOT EXISTS idx_orders_closed_at ON orders(closed_at)');
 
 // --- PREPARED STATEMENTS ---
 
 const upsertTableStmt = db.prepare(`
-  INSERT INTO tables (id, status, current_order_id, payment_method, total, qr_token, enabled, block_on_close)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO tables (id, status, current_order_id, payment_method, total, qr_token, enabled, block_on_close, visit_code)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     status = excluded.status,
     current_order_id = excluded.current_order_id,
@@ -135,7 +137,8 @@ const upsertTableStmt = db.prepare(`
     total = excluded.total,
     qr_token = excluded.qr_token,
     enabled = excluded.enabled,
-    block_on_close = excluded.block_on_close
+    block_on_close = excluded.block_on_close,
+    visit_code = excluded.visit_code
 `);
 
 const upsertOrderStmt = db.prepare(`
@@ -195,6 +198,7 @@ const rowToTable = (row) => ({
   paymentMethod: row.payment_method,
   total: row.total,
   qrToken: row.qr_token,
+  visitCode: row.visit_code,
   enabled: Boolean(row.enabled),
   blockOnClose: Boolean(row.block_on_close)
 });
@@ -238,7 +242,7 @@ export const runInTransaction = (fn) => {
 
 export const persistTable = (table) => {
   upsertTableStmt.run(table.id, table.status, table.currentOrderId, table.paymentMethod, table.total, table.qrToken || null,
-    table.enabled ? 1 : 0, table.blockOnClose ? 1 : 0);
+    table.enabled ? 1 : 0, table.blockOnClose ? 1 : 0, table.visitCode || null);
 };
 
 export const persistOrder = (order) => {

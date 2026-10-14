@@ -59,7 +59,8 @@ import {
   isImageId,
   decodeImageUpload,
   parseReportRange,
-  buildSalesReport
+  buildSalesReport,
+  newVisitCode
 } from './domain.js';
 import { passwordMatches, createSessionStore, createLoginThrottle } from './auth.js';
 
@@ -119,6 +120,21 @@ const sessions = createSessionStore();
 
 // Freno de fuerza bruta del login: 5 intentos fallidos por IP cada 15 minutos.
 const loginThrottle = createLoginThrottle({ maxFailures: 5, windowMs: 15 * 60_000 });
+
+// Freno para el código de visita de las mesas: con 4 dígitos, sin límite se probarían los
+// 10.000 en segundos. La clave es IP + mesa, no solo la IP: con la app en la nube, todos
+// los clientes del WiFi del local salen con la misma IP pública, y un par de errores de
+// tipeo en una mesa no puede bloquear a las demás. Con 10 intentos cada 15 minutos,
+// probar todos los códigos de una mesa lleva días, y el código cambia en cada visita.
+// No se limpia al acertar: alguien sentado en la mesa conoce el código vigente, y si
+// acertar reiniciara el contador podría intercalarlo para seguir probando.
+const newVisitCodeThrottle = () => createLoginThrottle({ maxFailures: 10, windowMs: 15 * 60_000 });
+let visitCodeThrottle = newVisitCodeThrottle();
+// Código de la visita anterior de cada mesa. Un celular que se quedó con ese código (lo
+// tenía guardado de antes del cobro) no está adivinando: se le avisa que el código
+// cambió y no cuenta como intento fallido. Solo en memoria: tras un reinicio, como mucho
+// cuenta como un error más.
+const previousVisitCodes = new Map();
 
 const staffRoleOf = (token) => sessions.roleOf(token);
 
@@ -277,9 +293,11 @@ const DEFAULT_CATEGORIES = [
 // del server ya no borra las mesas, pedidos ni cambios del menú.
 const persistedState = loadState(initialTables(), DEFAULT_MENU, DEFAULT_CATEGORIES);
 let tables = persistedState.tables;
-// Mesas de una base anterior a los tokens de QR: se les genera uno al arrancar.
-tables.filter(t => !t.qrToken).forEach(t => {
-  t.qrToken = newQrToken();
+// Mesas de una base anterior a los tokens de QR o al código de visita: se les genera
+// lo que les falte al arrancar.
+tables.filter(t => !t.qrToken || !t.visitCode).forEach(t => {
+  t.qrToken ||= newQrToken();
+  t.visitCode ||= newVisitCode();
   persistTable(t);
 });
 let orders = persistedState.orders;
@@ -335,11 +353,20 @@ const payloadOf = (data) => (data !== null && typeof data === 'object' ? data : 
 // Se revalida contra el token actual y contra la sala: si la mesa se dio de baja, su QR
 // se regeneró o se cobró (kickTableClients), la conexión pierde el acceso aunque siga
 // abierta, y para volver a pedir tiene que unirse de nuevo.
+// También se revalida el código de visita: al cobrar la mesa cambia, y una conexión de la
+// visita anterior no puede actuar sobre la siguiente.
 const getSocketTable = (socket) => {
   const bound = socket.data.table;
   if (!bound || !socket.rooms.has(`table-${bound.id}`)) return null;
   const table = findTable(bound.id);
-  return table && table.qrToken === bound.token ? table : null;
+  return table && table.qrToken === bound.token && table.visitCode === bound.visitCode ? table : null;
+};
+
+// IP del cliente de un socket, para el freno del código de visita. Detrás de un proxy
+// (TRUST_PROXY) la conexión llega desde el proxy y la IP real viene en X-Forwarded-For.
+const socketIp = (socket) => {
+  const forwarded = process.env.TRUST_PROXY && socket.handshake.headers['x-forwarded-for'];
+  return forwarded ? forwarded.split(',')[0].trim() : socket.handshake.address;
 };
 
 // --- SESIONES DE PERSONAL EN LOS SOCKETS ---
@@ -520,10 +547,14 @@ app.get('/api/reports', requireRole('counter'), (req, res) => {
 // (el reset de la demo); si no, cada mesa nace con uno nuevo (el de los tests).
 // enableTables: las mesas arrancan habilitadas en vez de bloqueadas.
 const resetToSeed = ({ keepQrTokens = false, enableTables = false } = {}) => {
-  const previousTokens = new Map(tables.map(t => [t.id, t.qrToken]));
+  const previous = new Map(tables.map(t => [t.id, t]));
   tables = initialTables();
   tables.forEach(t => {
-    if (keepQrTokens && previousTokens.has(t.id)) t.qrToken = previousTokens.get(t.id);
+    // La demo conserva token y código, así las pestañas abiertas siguen entrando.
+    if (keepQrTokens && previous.has(t.id)) {
+      t.qrToken = previous.get(t.id).qrToken;
+      t.visitCode = previous.get(t.id).visitCode;
+    }
     t.enabled = enableTables;
   });
   orders = [];
@@ -541,6 +572,10 @@ if (DEV_MODE) {
     // El menú también vuelve a la semilla: los specs de menú crean/borran productos
     // y los demás specs piden los productos por nombre esperando sus precios de fábrica.
     setOrderWritesFailing(false);
+    // El spec del código de visita bloquea la IP local a propósito: una corrida nueva de
+    // la suite tiene que arrancar sin ese bloqueo.
+    visitCodeThrottle = newVisitCodeThrottle();
+    previousVisitCodes.clear();
     resetToSeed();
     res.json({ ok: true });
   });
@@ -558,7 +593,7 @@ if (DEV_MODE) {
 // en un despliegue real los links salen solo del Mostrador.
 if (DEV_MODE || DEMO_MODE) {
   app.get('/api/demo/table-links', (req, res) => {
-    res.json(tables.map(t => ({ id: t.id, qrToken: t.qrToken })));
+    res.json(tables.map(t => ({ id: t.id, qrToken: t.qrToken, visitCode: t.visitCode })));
   });
 }
 
@@ -631,7 +666,7 @@ io.on('connection', (socket) => {
   // Unirse a un rol/canal específico. 'kitchen' y 'counter' son canales de personal
   // y requieren un token de sesión válido; 'table-X' requiere el token del QR de la mesa.
   on('join', (data) => {
-    const { role, token } = payloadOf(data);
+    const { role, token, code } = payloadOf(data);
     if (typeof role !== 'string') return;
 
     if (role === 'kitchen' || role === 'counter') {
@@ -657,13 +692,38 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Segundo paso: el código de la visita (ver newVisitCode en domain.js). Con el QR
+      // válido pero sin código, el cliente pide que lo ingresen; no entra a la sala ni ve
+      // los pedidos de la mesa. Un código errado cuenta para el freno (IP + mesa), salvo
+      // que sea el de la visita anterior.
+      if (code === undefined || code === null || code === '') {
+        socket.emit('visit-code-required', { tableId });
+        return;
+      }
+      if (code !== table.visitCode && code === previousVisitCodes.get(tableId)) {
+        socket.emit('visit-code-required', { tableId, changed: true });
+        return;
+      }
+      const throttleKey = `${socketIp(socket)}|${tableId}`;
+      const limit = visitCodeThrottle.check(throttleKey);
+      if (!limit.allowed) {
+        socket.emit('visit-code-error', { retryAfterMs: limit.retryAfterMs });
+        return;
+      }
+      if (code !== table.visitCode) {
+        visitCodeThrottle.fail(throttleKey);
+        const after = visitCodeThrottle.check(throttleKey);
+        socket.emit('visit-code-error', after.allowed ? {} : { retryAfterMs: after.retryAfterMs });
+        return;
+      }
+
       // Una conexión atiende a una sola mesa: el simulador del portal puede cambiar de
       // mesa en la misma pestaña, y la mesa anterior no tiene que seguir recibiendo eventos.
       const previous = socket.data.table;
       if (previous && previous.id !== tableId) socket.leave(`table-${previous.id}`);
       // Los eventos del cliente (new-order, request-bill, request-assistance) usan esta
       // mesa y no el tableId que manda el navegador (ver getSocketTable).
-      socket.data.table = { id: tableId, token };
+      socket.data.table = { id: tableId, token, visitCode: code };
       socket.join(role);
       console.log(`Socket ${socket.id} se unió al canal: ${role}`);
 
@@ -895,6 +955,22 @@ io.on('connection', (socket) => {
     kickTableClients(table.id);
   });
 
+  // Evento: Nuevo código de visita para una mesa (desde Mostrador). Para cuando el código
+  // se filtró o alguien que ya se fue lo sigue usando: los celulares conectados pierden el
+  // acceso y tienen que ingresar el código nuevo. No toca el QR impreso.
+  staffOn('counter', 'regenerate-visit-code', ({ tableId: rawTableId }) => {
+    const table = findTable(String(rawTableId));
+    if (!table) return;
+
+    previousVisitCodes.set(table.id, table.visitCode);
+    table.visitCode = newVisitCode();
+    persistTable(table);
+
+    broadcastTables();
+    io.to(`table-${table.id}`).emit('visit-code-required', { tableId: table.id, changed: true });
+    kickTableClients(table.id);
+  });
+
   // --- HABILITACIÓN DE MESAS (desde Mostrador) ---
   // Una mesa bloqueada no acepta pedidos ni llamados al mozo. El inicio y el cierre del
   // día cambian todas las mesas a la vez; en el medio, cada mesa se maneja por separado.
@@ -932,6 +1008,7 @@ io.on('connection', (socket) => {
     const stillInKitchen = activeOrdersOf(tableId).filter(isKitchenVisible);
     // Solo los pedidos activos de la visita (ver closeOrders).
     const closedOrders = closeOrders(orders, tableId, new Date().toISOString());
+    previousVisitCodes.set(tableId, tables[tableIndex].visitCode);
     tables[tableIndex] = closedTable(tables[tableIndex]);
     activeAssistanceRequests.delete(tableId);
 

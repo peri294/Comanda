@@ -819,3 +819,25 @@ body {
     margin-top: 16px;
   }
 }
+
+/* Código de visita de la mesa (pantalla del cliente y tarjeta del mostrador) */
+.visit-code-input {
+  width: 100%;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 0.5em;
+  text-align: center;
+}
+
+.visit-code-badge {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.15em;
+  font-weight: 800;
+  color: var(--accent-gold);
+}

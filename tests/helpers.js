@@ -51,17 +51,25 @@ export const placeOrder = async (client, productId) => {
 // Cada mesa tiene un token secreto en su QR (?table=X&t=<token>), y sin él el server no
 // deja unirse a la mesa. Los tests lo leen del endpoint de demo, que solo existe fuera
 // de producción (igual que /api/test/reset).
-export const tableToken = async (tableId) => {
+export const tableLink = async (tableId) => {
   const links = await (await fetch(`${BACKEND}/api/demo/table-links`)).json();
-  return links.find(l => l.id === String(tableId))?.qrToken;
+  return links.find(l => l.id === String(tableId));
+};
+export const tableToken = async (tableId) => (await tableLink(tableId))?.qrToken;
+// Código de la visita en curso de la mesa (lo que el mozo le da a los clientes).
+export const visitCode = async (tableId) => (await tableLink(tableId))?.visitCode;
+
+// URL de la mesa con el código de la visita, como la arma el simulador del portal, para
+// page.goto(). El QR impreso no lleva el código (c): ver visit-code.spec.js.
+export const clientUrl = async (tableId) => {
+  const { qrToken, visitCode: code } = await tableLink(tableId);
+  return `/?view=client&table=${tableId}&t=${qrToken}&c=${code}`;
 };
 
-// URL del QR de la mesa, para page.goto()
-export const clientUrl = async (tableId) => `/?view=client&table=${tableId}&t=${await tableToken(tableId)}`;
-
-// Une un socket crudo a la mesa con su token, como lo hace ClientView
+// Une un socket crudo a la mesa con su token y el código de la visita, como ClientView
 export const joinTable = async (socket, tableId) => {
-  socket.emit('join', { role: `table-${tableId}`, token: await tableToken(tableId) });
+  const { qrToken, visitCode: code } = await tableLink(tableId);
+  socket.emit('join', { role: `table-${tableId}`, token: qrToken, code });
 };
 
 // Agrega una mesa con número puntual y la habilita (las mesas nuevas nacen bloqueadas).

@@ -110,12 +110,13 @@ export default function App() {
   };
 
   // Helper to change view and update browser URL without reloading
-  const navigateTo = (newView, table = null, token = null) => {
+  const navigateTo = (newView, table = null, token = null, visitCode = null) => {
     const params = new URLSearchParams();
     if (newView !== 'portal') {
       params.set('view', newView);
       if (table) params.set('table', table);
       if (token) params.set('t', token);
+      if (visitCode) params.set('c', visitCode);
     }
     const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
     window.history.pushState({}, '', newUrl);
@@ -323,7 +324,7 @@ export default function App() {
               )}
 
               <div className="qr-grid">
-                {(demoTableLinks || []).map(({ id: tableNum, qrToken: token }) => {
+                {(demoTableLinks || []).map(({ id: tableNum, qrToken: token, visitCode }) => {
                   return (
                     <div key={tableNum} className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', background: 'rgba(255, 255, 255, 0.02)' }}>
                       <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--accent-gold)' }}>Mesa {tableNum}</div>
@@ -331,12 +332,12 @@ export default function App() {
                         <button 
                           className="btn-primary" 
                           style={{ padding: '6px 8px', fontSize: '0.75rem', borderRadius: '6px', width: '100%' }}
-                          onClick={() => navigateTo('client', tableNum, token)}
+                          onClick={() => navigateTo('client', tableNum, token, visitCode)}
                         >
                           Ir a Mesa
                         </button>
                         <a 
-                          href={tableClientUrl(tableNum, token)} 
+                          href={tableClientUrl(tableNum, token, visitCode)} 
                           target="_blank" 
                           rel="noopener noreferrer" 
                           className="btn-secondary" 

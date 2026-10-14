@@ -12,8 +12,10 @@ export const BACKEND_URL =
 
 // Link que va en el QR de una mesa. El token (t) es el secreto de la mesa: sin él el
 // server no deja unirse a la mesa ni pedir a su nombre.
-export const tableClientUrl = (tableId, qrToken) =>
-  `?view=client&table=${encodeURIComponent(tableId)}&t=${encodeURIComponent(qrToken)}`;
+// El código de visita (c) solo va en los links del simulador de la demo: el QR impreso es
+// fijo y nunca lo lleva (cambia en cada visita, lo da el mozo).
+export const tableClientUrl = (tableId, qrToken, visitCode) =>
+  `?view=client&table=${encodeURIComponent(tableId)}&t=${encodeURIComponent(qrToken)}${visitCode ? `&c=${encodeURIComponent(visitCode)}` : ''}`;
 
 // URL de una imagen guardada en el server (foto de producto o logo). Las rutas que da el
 // server son relativas (/api/images/...): en desarrollo el backend está en otro puerto.

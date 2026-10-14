@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { tableToken, joinTable, login, connect, connectStaff, fetchState, placeOrder, settle, addTable } from './helpers.js';
+import { tableToken, visitCode, joinTable, login, connect, connectStaff, fetchState, placeOrder, settle, addTable } from './helpers.js';
 
-// Respuesta del server al join de una mesa: el estado de la mesa, o null si no entró
-const joinWith = async (socket, tableId, token) => {
+// Respuesta del server al join de una mesa: el estado de la mesa, o null si no entró.
+// Con un token válido hace falta también el código de la visita (ver visit-code.spec.js).
+const joinWith = async (socket, tableId, token, code) => {
   const state = new Promise(resolve => socket.once('table-state', resolve));
-  socket.emit('join', { role: `table-${tableId}`, token });
+  socket.emit('join', { role: `table-${tableId}`, token, code });
   return state;
 };
 
@@ -32,7 +33,7 @@ test('sin el token del QR no se entra a la mesa, y una mesa no puede actuar sobr
   // 2. La mesa 30, con su token, manda eventos con el tableId de la 31: se ignora el
   // tableId del payload y todo cae en la mesa 30.
   const client30 = await connect();
-  expect((await joinWith(client30, '30', await tableToken('30'))).id).toBe('30');
+  expect((await joinWith(client30, '30', await tableToken('30'), await visitCode('30'))).id).toBe('30');
   // Filtrado por mesa: otros specs en paralelo también llaman al mozo
   const assistance = new Promise(resolve => counter.socket.on('assistance-requested', data => {
     if (data.tableId === '30' || data.tableId === '31') resolve(data);
@@ -89,8 +90,8 @@ test('regenerar el QR corta al token viejo; cerrar la mesa lo conserva', async (
   client.emit('new-order', { items: [{ productId: 'm1', quantity: 1 }] });
   await settle();
   expect((await fetchState(counter.token)).tables.find(t => t.id === '32').status).toBe('libre');
-  // Volver a escanear el QR (mismo token) lo deja entrar de nuevo
-  expect((await joinWith(client, '32', oldToken)).id).toBe('32');
+  // Volver a escanear el QR (mismo token) con el código de la visita nueva lo deja entrar
+  expect((await joinWith(client, '32', oldToken, await visitCode('32'))).id).toBe('32');
 
   // Regenerar: quien está conectado con el token viejo recibe el aviso y pierde el acceso
   const removed = new Promise(resolve => client.once('table-removed', resolve));
@@ -106,7 +107,7 @@ test('regenerar el QR corta al token viejo; cerrar la mesa lo conserva', async (
 
   // El token viejo ya no entra; el nuevo sí
   expect(await joinWith(client, '32', oldToken)).toBeNull();
-  expect((await joinWith(client, '32', newToken)).id).toBe('32');
+  expect((await joinWith(client, '32', newToken, await visitCode('32'))).id).toBe('32');
 
   client.close();
   counter.socket.close();

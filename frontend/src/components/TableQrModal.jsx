@@ -3,7 +3,9 @@ import { QRCodeSVG } from 'qrcode.react';
 import { X, Printer, ExternalLink, QrCode } from 'lucide-react';
 import { tableClientUrl } from '../config';
 
-const CAPTION = 'Escaneá para ver el menú y pedir desde tu mesa';
+// El QR es fijo, pero para entrar a la mesa hace falta el código de la visita, que da el
+// personal (cambia cada vez que se cobra la mesa).
+export const QR_CAPTION = 'Escaneá para ver el menú y pedir desde tu mesa. El código de la mesa te lo da el personal.';
 
 // QR de una mesa, listo para imprimir y pegar en la mesa. Codifica la URL absoluta del
 // cliente con el token secreto de la mesa: el mismo link que abre el botón "Abrir link".
@@ -32,8 +34,14 @@ export default function TableQrModal({ table, onClose }) {
 
           <div style={{ textAlign: 'center' }}>
             <div className="qr-code-box">{qr(220)}</div>
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '12px' }}>{CAPTION}</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '12px' }}>{QR_CAPTION}</div>
           </div>
+
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '14px' }}>
+            El QR no cambia: se imprime una vez. Para entrar a la mesa, cada cliente ingresa el
+            código de la visita{table.visitCode ? <> (ahora <strong className="visit-code-badge">{table.visitCode}</strong>)</> : null},
+            que cambia cada vez que se cobra la mesa.
+          </p>
 
           {isLocalhost && (
             <p style={{ color: 'var(--warning)', fontSize: '0.8rem', marginTop: '14px' }}>
@@ -68,7 +76,7 @@ export default function TableQrModal({ table, onClose }) {
         <div className="qr-print-sheet">
           <div className="qr-print-title">Mesa {table.id}</div>
           {qr(320)}
-          <div className="qr-print-caption">{CAPTION}</div>
+          <div className="qr-print-caption">{QR_CAPTION}</div>
         </div>,
         document.body
       )}

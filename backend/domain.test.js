@@ -9,6 +9,7 @@ import {
   recomputeTable,
   applyEnabled,
   closedTable,
+  isVisitCode,
   closeOrders,
   sanitizeSettings,
   parseReportRange,
@@ -237,6 +238,36 @@ describe('habilitación de mesas', () => {
     assert.equal(cobrada.status, 'libre');
     assert.equal(cobrada.total, 0);
     assert.equal(cobrada.paymentMethod, null);
+  });
+});
+
+describe('código de visita', () => {
+  test('cada mesa nace con un código de 4 dígitos', () => {
+    const t = createTable('7');
+    assert.ok(isVisitCode(t.visitCode));
+  });
+
+  test('cobrar la mesa empieza una visita con otro código, y el QR se conserva', () => {
+    // Con 10.000 códigos posibles, uno puede repetirse por azar: se prueba que se regenera
+    // en varias visitas seguidas, no que nunca coincida con el anterior.
+    let mesa = createTable('7');
+    const codes = new Set([mesa.visitCode]);
+    for (let i = 0; i < 20; i++) {
+      const qrToken = mesa.qrToken;
+      mesa = closedTable(mesa);
+      assert.equal(mesa.qrToken, qrToken);
+      assert.ok(isVisitCode(mesa.visitCode));
+      codes.add(mesa.visitCode);
+    }
+    assert.ok(codes.size > 1);
+  });
+
+  test('isVisitCode exige exactamente 4 dígitos', () => {
+    assert.equal(isVisitCode('0042'), true);
+    assert.equal(isVisitCode('42'), false);
+    assert.equal(isVisitCode(4242), false);
+    assert.equal(isVisitCode('42a2'), false);
+    assert.equal(isVisitCode(undefined), false);
   });
 });
 

@@ -32,6 +32,13 @@ export const ASSISTANCE_REOPEN_COOLDOWN_MS = 10_000;
 // corto para que el QR no quede denso.
 export const newQrToken = () => crypto.randomBytes(12).toString('base64url');
 
+// Código de visita: 4 dígitos que el mozo le da a la mesa y cada celular ingresa una vez.
+// El QR es fijo y cualquiera puede haberse guardado su link; el código cambia en cada
+// visita (al cobrar), así que un link viejo sin el código vigente no ve ni pide nada.
+// Pocos dígitos a propósito, para dictarlo; la fuerza bruta la frena server.js por IP.
+export const newVisitCode = () => String(crypto.randomInt(0, 10_000)).padStart(4, '0');
+export const isVisitCode = (code) => typeof code === 'string' && /^\d{4}$/.test(code);
+
 export const createTable = (id) => ({
   id,
   status: 'libre', // 'libre' | 'pedido_pendiente' | 'comiendo' | 'esperando_cuenta' | 'pagando_tarjeta'
@@ -39,6 +46,7 @@ export const createTable = (id) => ({
   paymentMethod: null,
   total: 0,
   qrToken: newQrToken(),
+  visitCode: newVisitCode(),
   // Toda mesa nace bloqueada: recibe pedidos recién cuando el Mostrador la habilita
   // (al iniciar el día o una por una). Fuera del horario, un link filtrado no sirve.
   enabled: false,
@@ -126,6 +134,8 @@ export const closedTable = (previous) => ({
   paymentMethod: null,
   total: 0,
   qrToken: previous.qrToken,
+  // Visita nueva, código nuevo: quien se quedó con el de la visita anterior pierde el acceso.
+  visitCode: newVisitCode(),
   enabled: previous.enabled && !previous.blockOnClose,
   blockOnClose: false
 });

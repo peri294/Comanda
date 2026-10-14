@@ -31,7 +31,12 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   const qrLink = await counterPage.getByRole('link', { name: 'Abrir el link de la Mesa 13' }).getAttribute('href');
   await counterPage.getByRole('button', { name: 'Cerrar', exact: true }).click();
   expect(qrLink).toMatch(/[?&]t=/);
+  expect(qrLink).not.toMatch(/[?&]c=/);
   await clientPage.goto(`/${qrLink}`);
+  // El QR no lleva el código de la visita: el cliente lo ingresa, leído de la tarjeta de la mesa
+  const code = await mesa13.getByTestId('visit-code-13').textContent();
+  await clientPage.getByLabel('Código de la mesa').fill(code);
+  await clientPage.getByRole('button', { name: /entrar a la mesa/i }).click();
   await expect(clientPage.getByText('Cargando menú delicioso...')).not.toBeVisible({ timeout: 20000 });
   await clientPage.locator('.menu-card:has-text("Espresso Italiano")').getByRole('button', { name: /agregar/i }).click();
   await clientPage.locator('.cart-float-btn').click();
@@ -76,8 +81,13 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   await counterPage.reload();
   await expect(cajaPanel.getByText('$0')).toBeVisible({ timeout: 15000 });
 
-  // El cliente vuelve a escanear el QR: la mesa sigue habilitada, así que entra de nuevo
+  // El cliente vuelve a escanear el QR: la mesa sigue habilitada, pero es otra visita y
+  // el código guardado ya no sirve. Con el código nuevo de la tarjeta entra de nuevo.
   await clientPage.reload();
+  await expect(clientPage.getByLabel('Código de la mesa')).toBeVisible({ timeout: 15000 });
+  const newCode = await mesa13.getByTestId('visit-code-13').textContent();
+  await clientPage.getByLabel('Código de la mesa').fill(newCode);
+  await clientPage.getByRole('button', { name: /entrar a la mesa/i }).click();
   await expect(clientPage.getByText('Nuestro Menú')).toBeVisible({ timeout: 15000 });
 
   // 7. DAR DE BAJA LA MESA

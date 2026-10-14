@@ -15,7 +15,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /(close-table|reports|write-failure|day-cycle|sessions)\.spec\.js/,
+      testIgnore: /(close-table|reports|write-failure|day-cycle|sessions|visit-code)\.spec\.js/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -52,10 +52,18 @@ export default defineConfig({
     },
     {
       // "Cerrar Otras Sesiones" revoca las sesiones de personal de todos los specs: corre
-      // último, cuando ya no queda ninguno que las necesite.
+      // cuando ya no queda ninguno que use las suyas (visit-code inicia sesión de nuevo).
       name: 'sessions',
       testMatch: /sessions\.spec\.js/,
       dependencies: ['day-cycle'],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // La prueba de fuerza bruta del código de visita bloquea la IP local para una mesa:
+      // corre al final de todo (/api/test/reset limpia el bloqueo).
+      name: 'visit-code',
+      testMatch: /visit-code\.spec\.js/,
+      dependencies: ['sessions'],
       use: { ...devices['Desktop Chrome'] },
     },
   ],

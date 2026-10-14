@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon, ShieldOff, Settings, BarChart3 } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon, ShieldOff, Settings, BarChart3, KeyRound } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
 import { formatPrice } from '../utils/format';
@@ -309,6 +309,13 @@ export default function CounterView({ socket, token, onLogout, businessName, log
     socket.emit('regenerate-table-qr', { tableId });
   };
 
+  // Para cuando el código de una mesa se filtró o lo sigue usando alguien que ya se fue:
+  // los celulares conectados tienen que ingresar el código nuevo (el QR no cambia).
+  const handleRegenerateVisitCode = (tableId) => {
+    if (!window.confirm(`¿Cambiar el código de la Mesa ${tableId}? Los celulares conectados tienen que ingresar el nuevo.`)) return;
+    socket.emit('regenerate-visit-code', { tableId });
+  };
+
   // Para una tablet perdida o alguien que dejó de trabajar: todas las demás pantallas
   // de cocina y mostrador vuelven al login (esta no).
   const handleRevokeOtherSessions = () => {
@@ -463,6 +470,22 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                       {table.blockOnClose && (
                         <div style={{ fontSize: '0.7rem', color: 'var(--warning)', marginTop: '2px' }}>
                           Se bloquea al cobrar
+                        </div>
+                      )}
+                      {/* Código de la visita: el mozo se lo da a la mesa al sentarse. Cambia
+                          solo al cobrarla; el botón lo cambia antes si se filtró. */}
+                      {table.enabled && table.visitCode && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          Código <span className="visit-code-badge" data-testid={`visit-code-${table.id}`}>{table.visitCode}</span>
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '2px 6px' }}
+                            onClick={() => handleRegenerateVisitCode(table.id)}
+                            title={`Cambiar el código de la Mesa ${table.id}`}
+                            aria-label={`Cambiar el código de la Mesa ${table.id}`}
+                          >
+                            <KeyRound size={11} />
+                          </button>
                         </div>
                       )}
                     </div>
@@ -728,7 +751,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                               <option value="">Agregar producto...</option>
                               {/* Sin agotados: el server rechazaría agregarlos, la UI no los ofrece */}
                               {menu.filter(m => m.available !== false).map(m => (
-                                <option key={m.id} value={m.id}>{m.name} — ${m.price}</option>
+                                <option key={m.id} value={m.id}>{m.name} — {formatPrice(m.price)}</option>
                               ))}
                             </select>
                             <button className="btn-secondary" style={{ fontSize: '0.8rem' }} disabled={!itemToAdd} onClick={addEditItem}>
