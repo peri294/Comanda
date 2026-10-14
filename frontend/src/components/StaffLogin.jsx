@@ -39,9 +39,9 @@ export default function StaffLogin({ role, onLogin, error, loading, demoPassword
             style={{
               padding: '12px',
               borderRadius: '10px',
-              background: 'rgba(0, 0, 0, 0.2)',
+              background: 'var(--bg-input)',
               border: '1px solid var(--border-color)',
-              color: 'white',
+              color: 'var(--text-primary)',
               outline: 'none',
               fontFamily: 'var(--font-main)',
               textAlign: 'center',

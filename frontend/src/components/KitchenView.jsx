@@ -209,12 +209,12 @@ export default function KitchenView({ socket, token, onLogout }) {
                   </button>
                 )}
                 {order.status === 'en_preparacion' && (
-                  <button className="btn-primary" style={{ width: '100%', background: 'linear-gradient(135deg, var(--success), #4a9e62)', boxShadow: '0 4px 15px rgba(96, 180, 123, 0.3)' }} onClick={() => updateStatus(order.id, 'listo')}>
+                  <button className="btn-primary" style={{ width: '100%', background: 'linear-gradient(135deg, var(--success-pastel), #A9D6B6)', boxShadow: '0 4px 12px rgba(140, 199, 159, 0.35)' }} onClick={() => updateStatus(order.id, 'listo')}>
                     <Check size={16} /> Marcar como Listo
                   </button>
                 )}
                 {order.status === 'listo' && (
-                  <button className="btn-secondary" style={{ width: '100%', color: 'var(--text-primary)', border: '1px solid rgba(255, 255, 255, 0.2)' }} onClick={() => updateStatus(order.id, 'entregado')}>
+                  <button className="btn-secondary" style={{ width: '100%', color: 'var(--text-primary)', border: '1px solid var(--border-strong)' }} onClick={() => updateStatus(order.id, 'entregado')}>
                     <Check size={16} /> Confirmar Entrega
                   </button>
                 )}

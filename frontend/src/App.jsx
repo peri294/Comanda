@@ -192,9 +192,9 @@ export default function App() {
               role="status"
               aria-label="Sin conexión"
               style={{
-                background: 'rgba(231, 111, 81, 0.12)',
+                background: 'var(--danger-soft)',
                 color: 'var(--danger)',
-                border: '1px solid rgba(231, 111, 81, 0.3)',
+                border: '1px solid var(--danger-pastel)',
                 fontSize: '0.8rem'
               }}
             >
@@ -364,7 +364,7 @@ export default function App() {
               <div className="qr-grid">
                 {(demoTableLinks || []).map(({ id: tableNum, qrToken: token, visitCode }) => {
                   return (
-                    <div key={tableNum} className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', background: 'rgba(255, 255, 255, 0.02)' }}>
+                    <div key={tableNum} className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--bg-subtle)' }}>
                       <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--accent-gold)' }}>Mesa {tableNum}</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         <button 

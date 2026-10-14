@@ -554,7 +554,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                         <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Mesa vacía</span>
                         <button
                           className="btn-secondary"
-                          style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'rgba(231, 111, 81, 0.3)' }}
+                          style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'var(--danger-pastel)' }}
                           onClick={() => handleRemoveTable(table.id)}
                           title={`Dar de baja la Mesa ${table.id}`}
                         >
@@ -571,8 +571,8 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                             style={{ 
                               width: '100%', 
                               background: table.status === 'esperando_cuenta' 
-                                ? 'linear-gradient(135deg, var(--danger), #be5237)' 
-                                : 'linear-gradient(135deg, var(--accent-gold), var(--accent-mocha))',
+                                ? 'linear-gradient(135deg, var(--danger-pastel), #EFB3A9)' 
+                                : 'linear-gradient(135deg, var(--accent-pastel), var(--accent-pastel-light))',
                               fontSize: '0.85rem',
                               padding: '8px 12px'
                             }} 
@@ -616,7 +616,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                     <div key={req.tableId} className="assistance-row" style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       padding: '10px 12px', borderRadius: '10px',
-                      background: 'rgba(231, 111, 81, 0.1)', border: '1px solid rgba(231, 111, 81, 0.3)'
+                      background: 'var(--danger-soft)', border: '1px solid var(--danger-pastel)'
                     }}>
                       <span style={{ fontWeight: 700, color: 'var(--danger)' }}>Mesa {req.tableId}</span>
                       <button
@@ -647,7 +647,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                     padding: '12px', 
                     fontSize: '0.85rem', 
                     borderLeft: `3px solid ${notificationColor(notif.type)}`,
-                    background: 'rgba(255, 255, 255, 0.02)'
+                    background: 'var(--bg-subtle)'
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginBottom: '2px' }}>
                       <span style={{ color: notificationColor(notif.type) }}>{notif.title}</span>
@@ -719,7 +719,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                             </button>
                             <button
                               className="btn-secondary"
-                              style={{ padding: '4px 10px', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'rgba(231, 111, 81, 0.3)' }}
+                              style={{ padding: '4px 10px', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'var(--danger-pastel)' }}
                               onClick={() => handleCancelOrder(order)}
                             >
                               <Trash2 size={12} /> Cancelar
@@ -736,7 +736,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                             </p>
                           )}
                           {editItems.map(item => (
-                            <div key={item.productId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px dashed rgba(255,255,255,0.05)' }}>
+                            <div key={item.productId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px dashed var(--border-color)' }}>
                               <span>{item.name}</span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <button className="btn-secondary" style={{ padding: '4px', borderRadius: '6px' }} onClick={() => changeEditItemQty(item.productId, -1)}>
@@ -759,8 +759,8 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                               onChange={(e) => setItemToAdd(e.target.value)}
                               style={{
                                 flex: 1, padding: '8px', borderRadius: '8px',
-                                background: 'rgba(0, 0, 0, 0.2)', border: '1px solid var(--border-color)',
-                                color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.85rem'
+                                background: 'var(--bg-input)', border: '1px solid var(--border-color)',
+                                color: 'var(--text-primary)', fontFamily: 'var(--font-main)', fontSize: '0.85rem'
                               }}
                             >
                               <option value="">Agregar producto...</option>
@@ -787,7 +787,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                         <>
                           <ul style={{ listStyle: 'none' }}>
                             {order.items.map((item, idx) => (
-                              <li key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed rgba(255,255,255,0.05)' }}>
+                              <li key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed var(--border-color)' }}>
                                 <span><strong style={{ color: 'var(--accent-gold)' }}>{item.quantity}x</strong> {item.name}</span>
                                 <span>{formatPrice(item.price * item.quantity)}</span>
                               </li>
@@ -795,7 +795,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
                           </ul>
 
                           {order.notes && (
-                            <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(244,162,97,0.08)', border: '1px solid rgba(244,162,97,0.2)', borderRadius: '8px', fontSize: '0.85rem' }}>
+                            <div style={{ marginTop: '12px', padding: '10px', background: 'var(--warning-soft)', border: '1px solid var(--warning-pastel)', borderRadius: '8px', fontSize: '0.85rem' }}>
                               <strong>Notas:</strong> {order.notes}
                             </div>
                           )}
@@ -820,7 +820,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
               {selectedTable.status !== 'libre' && (
                 <button 
                   className="btn-primary" 
-                  style={{ flex: 1, background: 'linear-gradient(135deg, var(--success), #4a9e62)' }}
+                  style={{ flex: 1, background: 'linear-gradient(135deg, var(--success-pastel), #A9D6B6)' }}
                   onClick={() => handleCloseTable(selectedTable.id)}
                 >
                   Confirmar Cobro y Cerrar Mesa

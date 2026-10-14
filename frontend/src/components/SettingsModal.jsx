@@ -7,8 +7,8 @@ import { BACKEND_URL } from '../config';
 const MAX_BUSINESS_NAME_LENGTH = 60;
 
 const inputStyle = {
-  padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
-  border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
+  padding: '10px', borderRadius: '8px', background: 'var(--bg-input)',
+  border: '1px solid var(--border-color)', color: 'var(--text-primary)', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
 };
 
 // Configuración del local desde el Mostrador. El cambio no se aplica acá: el server lo

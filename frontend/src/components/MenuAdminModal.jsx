@@ -5,20 +5,20 @@ import { uploadImage, base64ToFile, generateProductImage } from '../utils/images
 import { imageUrl } from '../config';
 
 const inputStyle = {
-  padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
-  border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
+  padding: '10px', borderRadius: '8px', background: 'var(--bg-input)',
+  border: '1px solid var(--border-color)', color: 'var(--text-primary)', fontFamily: 'var(--font-main)', fontSize: '0.9rem'
 };
 const sectionStyle = {
   display: 'flex', flexDirection: 'column', gap: '10px', margin: '15px 0',
   padding: '14px', border: '1px solid var(--border-color)', borderRadius: '12px',
-  background: 'rgba(255, 255, 255, 0.02)'
+  background: 'var(--bg-subtle)'
 };
 const rowStyle = {
   display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px',
   padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: '10px'
 };
 const iconButtonStyle = { padding: '6px 10px' };
-const dangerButtonStyle = { ...iconButtonStyle, color: 'var(--danger)', borderColor: 'rgba(231, 111, 81, 0.3)' };
+const dangerButtonStyle = { ...iconButtonStyle, color: 'var(--danger)', borderColor: 'var(--danger-pastel)' };
 
 // imageId: undefined = sin cambios, null = sacar la foto, string = foto nueva ya subida.
 // aiPreview: imagen generada con IA que todavía no se aceptó ({ mime, data } en base64).

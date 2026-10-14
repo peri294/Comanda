@@ -24,13 +24,13 @@ const PRESETS = {
 };
 
 const inputStyle = {
-  padding: '8px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.2)',
-  border: '1px solid var(--border-color)', color: 'white', fontFamily: 'var(--font-main)', fontSize: '0.85rem',
+  padding: '8px', borderRadius: '8px', background: 'var(--bg-input)',
+  border: '1px solid var(--border-color)', color: 'var(--text-primary)', fontFamily: 'var(--font-main)', fontSize: '0.85rem',
   colorScheme: 'dark'
 };
 const tableStyle = { width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' };
 const thStyle = { textAlign: 'left', color: 'var(--text-secondary)', fontWeight: 600, padding: '6px 8px', borderBottom: '1px solid var(--border-color)' };
-const tdStyle = { padding: '6px 8px', borderBottom: '1px solid rgba(255, 255, 255, 0.04)' };
+const tdStyle = { padding: '6px 8px', borderBottom: '1px solid var(--border-color)' };
 const numStyle = { ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
 
 // CSV con ";" (lo que Excel en español espera) y BOM para que respete las tildes.
@@ -103,7 +103,7 @@ function SalesByDayChart({ days }) {
           style={{
             position: 'absolute', top: 0, pointerEvents: 'none',
             left: `${((pad.left + (hovered + 0.5) * slot) / width) * 100}%`, transform: 'translateX(-50%)',
-            background: 'var(--bg-dark)', border: '1px solid var(--border-color)', borderRadius: '8px',
+            background: 'var(--bg-card-hover)', border: '1px solid var(--border-color)', borderRadius: '8px',
             padding: '6px 10px', fontSize: '0.8rem', whiteSpace: 'nowrap'
           }}
         >
