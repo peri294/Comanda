@@ -74,7 +74,9 @@ export default function CounterView({ socket, token, onLogout, businessName, log
   const [isPrintQrsOpen, setIsPrintQrsOpen] = useState(false);
   const categories = useCategories(socket);
 
-  // Estado inicial, re-pedido también tras cada reconexión del socket: los eventos
+  // Estado inicial, pedido cuando el server confirma la entrada a la sala (staff-joined),
+  // que pasa al cargar y tras cada reconexión del socket. Pedirlo antes del join dejaba un
+  // hueco: un evento emitido entre la respuesta y la entrada a la sala se perdía. Los eventos
   // emitidos mientras la tablet estuvo sin conexión (microcorte de Wi-Fi, cambio de
   // red) se perdieron, así que al volver se rehidrata todo desde el server en vez de
   // quedarse con un panel congelado. El mismo endpoint trae mesas, pedidos, llamados
@@ -95,10 +97,10 @@ export default function CounterView({ socket, token, onLogout, businessName, log
         .catch(err => console.error("Error fetching initial counter state:", err));
     };
 
-    fetchInitialState();
     if (!socket) return;
-    socket.on('connect', fetchInitialState);
-    return () => socket.off('connect', fetchInitialState);
+    const onJoined = ({ role } = {}) => { if (role === 'counter') fetchInitialState(); };
+    socket.on('staff-joined', onJoined);
+    return () => socket.off('staff-joined', onJoined);
   }, [socket, token]);
 
   // Menú, para poder agregar productos a un pedido al editarlo. También se re-pide al

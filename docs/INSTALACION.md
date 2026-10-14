@@ -135,3 +135,4 @@ La base se migra sola al arrancar: las columnas y tablas nuevas se agregan sin t
 | "Demasiados intentos" al ingresar el código | Hubo 10 códigos incorrectos para esa mesa desde la misma conexión: esperar 15 minutos, o que el mozo verifique el código de la tarjeta. |
 | Las ventas de un día aparecen en otro | La zona horaria del server no es la del local: definir `TZ`. |
 | Las pantallas del personal vuelven al login | El server se reinició, o alguien usó "Cerrar Otras Sesiones". |
+| Aviso rojo "Sin conexión" y botones deshabilitados | Esa pantalla perdió el contacto con el server (WiFi o server caído). Se reconecta sola y se pone al día; mientras tanto no se puede tocar nada, para que ninguna acción se pierda. Los clientes ven que tienen que pedir ayuda al mozo. |

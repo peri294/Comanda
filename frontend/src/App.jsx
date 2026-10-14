@@ -21,6 +21,9 @@ export default function App() {
   const [appConfig, setAppConfig] = useState(null);
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  // Se perdió la conexión (o no se pudo conectar). Distinto de !isConnected: al cargar la
+  // página el socket arranca desconectado un instante, y eso no es un corte que avisar.
+  const [connectionLost, setConnectionLost] = useState(false);
   const kitchenAuth = useStaffAuth('kitchen');
   const counterAuth = useStaffAuth('counter');
 
@@ -57,11 +60,15 @@ export default function App() {
 
     newSocket.on('connect', () => {
       setIsConnected(true);
+      setConnectionLost(false);
       console.log('Conectado al servidor de Sockets');
     });
 
+    newSocket.on('connect_error', () => setConnectionLost(true));
+
     newSocket.on('disconnect', () => {
       setIsConnected(false);
+      setConnectionLost(true);
       console.log('Desconectado del servidor de Sockets');
     });
 
@@ -179,7 +186,7 @@ export default function App() {
           {/* Aviso de conexión: solo cuando se corta. Con conexión no hay nada que avisar,
               y sin ella el personal y los clientes tienen que saber que los pedidos y
               cambios no están llegando. */}
-          {!isConnected && (
+          {connectionLost && (
             <span
               className="badge header-status"
               role="status"
@@ -217,6 +224,22 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="main-content">
+
+        {/* Aviso de conexión perdida. El cliente no puede pedir, pedir la cuenta ni llamar
+            al mozo desde el celular, así que se le dice a quién recurrir. Las pantallas del
+            personal quedan en pausa (ver el fieldset de abajo). */}
+        {connectionLost && view === 'client' && (
+          <div className="connection-lost-banner" role="alert">
+            <strong>Se perdió la conexión con la cafetería.</strong> Si no vuelve en unos
+            segundos, pedile ayuda al mozo o al encargado.
+          </div>
+        )}
+        {connectionLost && (view === 'kitchen' || view === 'counter') && (
+          <div className="connection-lost-banner" role="alert">
+            <strong>Sin conexión con el servidor.</strong> Las acciones están pausadas hasta que
+            vuelva y lo que se ve puede estar desactualizado. Si no vuelve, revisá el WiFi o el servidor.
+          </div>
+        )}
         
         {/* VIEW 1: Customer View */}
         {/* key fuerza un remount completo al cambiar de mesa (o de QR) en la misma pestaña,
@@ -225,10 +248,18 @@ export default function App() {
           <ClientView key={`${tableId}:${qrToken}`} tableId={tableId} qrToken={qrToken} socket={socket} />
         )}
 
+        {/* Pantallas del personal sin conexión: el fieldset deshabilitado bloquea todos sus
+            botones y campos (modales incluidos). Si no, lo que se tocara sin conexión
+            quedaba en el buffer del socket y salía al reconectar antes de que la pantalla
+            volviera a identificarse con su sesión, y el server lo descartaba en silencio:
+            el personal creía haber cobrado una mesa que seguía abierta. */}
+
         {/* VIEW 2: Kitchen Screen (detrás de login de personal) */}
         {view === 'kitchen' && (
           kitchenAuth.token ? (
-            <KitchenView socket={socket} token={kitchenAuth.token} onLogout={kitchenAuth.logout} />
+            <fieldset className="staff-view" disabled={!isConnected}>
+              <KitchenView socket={socket} token={kitchenAuth.token} onLogout={kitchenAuth.logout} />
+            </fieldset>
           ) : (
             <StaffLogin role="kitchen" onLogin={kitchenAuth.login} error={kitchenAuth.error} loading={kitchenAuth.loading} demoPassword={demoCredentials?.kitchen} />
           )
@@ -237,7 +268,9 @@ export default function App() {
         {/* VIEW 3: Counter/Manager Dashboard (detrás de login de personal) */}
         {view === 'counter' && (
           counterAuth.token ? (
-            <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} businessName={businessName} logoUrl={logoUrl} />
+            <fieldset className="staff-view" disabled={!isConnected}>
+              <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} businessName={businessName} logoUrl={logoUrl} />
+            </fieldset>
           ) : (
             <StaffLogin role="counter" onLogin={counterAuth.login} error={counterAuth.error} loading={counterAuth.loading} demoPassword={demoCredentials?.counter} />
           )

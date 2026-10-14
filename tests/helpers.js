@@ -1,7 +1,9 @@
 import { expect } from '@playwright/test';
 import { io } from 'socket.io-client';
 
-export const BACKEND = 'http://localhost:3001';
+// E2E_BACKEND permite correr la suite contra otro backend (otro puerto y otra base), sin
+// tocar el que se está usando a mano: la suite arranca con /api/test/reset, que la borra.
+export const BACKEND = process.env.E2E_BACKEND || 'http://localhost:3001';
 
 export const settle = () => new Promise(resolve => setTimeout(resolve, 300));
 

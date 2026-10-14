@@ -782,6 +782,10 @@ io.on('connection', (socket) => {
       socket.data.staffTokens = { ...socket.data.staffTokens, [role]: token };
       socket.join(role);
       console.log(`Socket ${socket.id} se unió al canal: ${role}`);
+      // La pantalla pide su estado inicial recién con esta confirmación: si lo pidiera
+      // en paralelo al join, un evento emitido entre la respuesta del estado y la entrada
+      // a la sala (un pedido, un llamado al mozo) no le llegaba por ningún lado.
+      socket.emit('staff-joined', { role });
       return;
     }
 

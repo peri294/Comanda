@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { io } from 'socket.io-client';
-import { connect, connectStaff, addTable, tableLink, joinTable, settle } from './helpers.js';
+import { BACKEND, connect, connectStaff, addTable, tableLink, joinTable, settle } from './helpers.js';
 
 // Corre último, en su propio proyecto de Playwright (ver playwright.config.js): la prueba
 // de fuerza bruta bloquea la IP local para una mesa, y conviene que nada corra después.
@@ -102,7 +102,7 @@ test('probar códigos se frena a los 10 intentos fallidos, por IP y por mesa', a
   const wrong = code === '0000' ? '1111' : '0000';
   // Siempre por 127.0.0.1: "localhost" puede alternar entre ::1 y 127.0.0.1, que para el
   // freno son dos IP distintas.
-  const attacker = io('http://127.0.0.1:3001', { transports: ['websocket'] });
+  const attacker = io(BACKEND.replace('localhost', '127.0.0.1'), { transports: ['websocket'] });
   await new Promise(resolve => attacker.on('connect', resolve));
 
   for (let i = 0; i < 9; i++) {

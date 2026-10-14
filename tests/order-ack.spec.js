@@ -62,7 +62,9 @@ test('sin conexión el pedido no se pierde: el carrito se conserva y se reenvía
   // Se corta la señal justo antes de confirmar
   await page.evaluate(() => window.__socket.disconnect());
   await page.getByRole('button', { name: /confirmar y enviar pedido/i }).click();
-  await expect(page.getByRole('alert')).toContainText('Sin conexión');
+  // El aviso del carrito (además del banner de conexión perdida, que pide ayuda al mozo)
+  await expect(page.getByRole('alert').filter({ hasText: 'Esperá a que vuelva la señal' })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'pedile ayuda al mozo' })).toBeVisible();
   await expect(page.getByText('Espresso Italiano').last()).toBeVisible(); // sigue en el carrito
 
   // Vuelve la señal: el reenvío llega una sola vez (antes el evento quedaba en el buffer,

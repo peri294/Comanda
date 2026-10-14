@@ -39,9 +39,10 @@ export default function KitchenView({ socket, token, onLogout }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Pedidos activos iniciales, re-pedidos también tras cada reconexión del socket:
-  // los pedidos que entraron mientras la pantalla estuvo sin conexión no llegan solos
-  // (el re-join a la sala no re-emite el estado), así que se rehidrata desde el server.
+  // Pedidos activos iniciales, pedidos cuando el server confirma la entrada a la sala
+  // (staff-joined): al cargar y tras cada reconexión. Pedirlos antes del join dejaba un
+  // hueco en el que un pedido nuevo no llegaba ni en el estado ni en vivo. Tras una
+  // reconexión, los pedidos que entraron sin conexión se recuperan así.
   useEffect(() => {
     const fetchOrders = () => {
       fetch(`${BACKEND_URL}/api/initial-state`, {
@@ -57,10 +58,10 @@ export default function KitchenView({ socket, token, onLogout }) {
         .catch(err => console.error("Error loading initial kitchen orders:", err));
     };
 
-    fetchOrders();
     if (!socket) return;
-    socket.on('connect', fetchOrders);
-    return () => socket.off('connect', fetchOrders);
+    const onJoined = ({ role } = {}) => { if (role === 'kitchen') fetchOrders(); };
+    socket.on('staff-joined', onJoined);
+    return () => socket.off('staff-joined', onJoined);
   }, [socket, token]);
 
   useSocketRoom(socket, 'kitchen', token);

@@ -37,6 +37,7 @@ En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → 
 
 - **Tiempo real con salas por rol y por mesa:** cada conexión entra a su sala de Socket.io (cocina, mostrador o una mesa puntual) y solo recibe sus eventos.
 - **Pedidos confirmados por acknowledgement:** el carrito se vacía recién cuando el server confirma el pedido. Si el celular pierde la señal, el pedido se reenvía al reconectar y llega una sola vez.
+- **Cortes de conexión a la vista:** sin conexión, el cliente ve que tiene que pedir ayuda al mozo, y las pantallas del personal se pausan (nada que se toque se pierde en silencio) y se rehidratan solas al volver.
 - **Persistencia write-through en SQLite:** el estado de trabajo vive en memoria y cada cambio se escribe en disco de forma sincrónica (WAL, prepared statements, migraciones de esquema). Mesas, pedidos y caja sobreviven a un reinicio del server.
 - **Menú administrable:** categorías propias, productos con foto, precios y stock ("Agotado") se editan desde el Mostrador y los clientes ven el cambio sin recargar. Las fotos se achican en el navegador y se guardan en la misma base.
 - **Reportes de ventas:** total, ticket promedio por mesa, ventas por día, productos más vendidos y cierres de caja de cualquier período, exportables a CSV.

@@ -9,7 +9,8 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:5173',
+    // E2E_BASE_URL: el frontend contra el que corre la suite (ver E2E_BACKEND en helpers.js)
+    baseURL: process.env.E2E_BASE_URL || 'http://localhost:5173',
     trace: 'on-first-retry',
   },
   projects: [
