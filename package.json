@@ -1,5 +1,5 @@
 {
-  "name": "qr-coffee-shop",
+  "name": "comanda",
   "private": true,
   "engines": {
     "node": ">=22.13"

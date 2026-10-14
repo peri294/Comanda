@@ -2,7 +2,7 @@
 # Un solo servicio Node sirve la API, los WebSockets y el build del frontend.
 services:
   - type: web
-    name: qr-coffee-shop
+    name: comanda
     runtime: node
     plan: free
     buildCommand: npm run build

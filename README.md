@@ -1,4 +1,4 @@
-# QR Coffee Shop
+# Comanda
 
 Sistema de pedidos en tiempo real para cafeterías: el cliente escanea el QR de su mesa y pide desde el celular, la cocina ve las comandas al instante y el mostrador gestiona mesas, menú, cobros y caja. Todo sincronizado por WebSockets.
 
@@ -10,7 +10,7 @@ Sistema de pedidos en tiempo real para cafeterías: el cliente escanea el QR de 
 ![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
 ![Playwright](https://img.shields.io/badge/Playwright-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)
 
-[![CI](https://github.com/peri294/PPR/actions/workflows/ci.yml/badge.svg)](https://github.com/peri294/PPR/actions/workflows/ci.yml)
+[![CI](https://github.com/peri294/Comanda/actions/workflows/ci.yml/badge.svg)](https://github.com/peri294/Comanda/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <!-- TODO: link a la demo pública en Render (ver "Despliegue") -->
@@ -25,7 +25,7 @@ Sistema de pedidos en tiempo real para cafeterías: el cliente escanea el QR de 
 
 ##  Qué resuelve
 
-En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → caja. QR Coffee Shop elimina esos saltos. Hay tres vistas sobre un mismo build, y cada una ve solo lo que le corresponde:
+En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → caja. Comanda elimina esos saltos. Hay tres vistas sobre un mismo build, y cada una ve solo lo que le corresponde:
 
 | Vista | Quién la usa | Qué hace |
 | --- | --- | --- |
