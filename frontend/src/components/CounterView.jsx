@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon, ShieldOff, Settings } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon, ShieldOff, Settings, BarChart3 } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
 import { formatPrice } from '../utils/format';
 import TableQrModal from './TableQrModal';
 import SettingsModal from './SettingsModal';
 import MenuAdminModal from './MenuAdminModal';
+import ReportsModal from './ReportsModal';
 import { useCategories } from '../hooks/useCategories';
 import { createAudioContext, playTone } from '../utils/sound';
 
@@ -68,6 +69,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
   // Administración del menú (alta/edición/baja/stock de productos)
   const [isMenuAdminOpen, setIsMenuAdminOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isReportsOpen, setIsReportsOpen] = useState(false);
   const categories = useCategories(socket);
 
   // Estado inicial, re-pedido también tras cada reconexión del socket: los eventos
@@ -406,6 +408,14 @@ export default function CounterView({ socket, token, onLogout, businessName, log
           <button
             className="btn-secondary"
             style={headerButtonStyle}
+            onClick={() => setIsReportsOpen(true)}
+            title="Ventas por período, productos más vendidos y cierres de caja"
+          >
+            <BarChart3 size={16} /> Reportes
+          </button>
+          <button
+            className="btn-secondary"
+            style={headerButtonStyle}
             onClick={handleRevokeOtherSessions}
             title="Cerrar las sesiones de las demás pantallas (tablet perdida, alguien que dejó de trabajar)"
           >
@@ -617,6 +627,8 @@ export default function CounterView({ socket, token, onLogout, businessName, log
         </div>
 
       </div>
+
+      {isReportsOpen && <ReportsModal token={token} onClose={() => setIsReportsOpen(false)} />}
 
       {isSettingsOpen && (
         <SettingsModal socket={socket} token={token} businessName={businessName} logoUrl={logoUrl} onClose={() => setIsSettingsOpen(false)} />

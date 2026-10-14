@@ -11,6 +11,10 @@ import {
   closedTable,
   closeOrders,
   sanitizeSettings,
+  parseReportRange,
+  buildSalesReport,
+  localDateKey,
+  MAX_REPORT_DAYS,
   decodeImageUpload,
   newImageId,
   MAX_IMAGE_BYTES,
@@ -350,5 +354,68 @@ describe('decodeImageUpload', () => {
     const big = Buffer.concat([png, Buffer.alloc(MAX_IMAGE_BYTES)]).toString('base64');
     assert.deepEqual(decodeImageUpload({ mime: 'image/png', data: big }), { error: 'too_large' });
     assert.deepEqual(decodeImageUpload(), { error: 'unsupported_type' });
+  });
+});
+
+describe('reportes de ventas', () => {
+  test('parseReportRange incluye ambos extremos en días locales', () => {
+    const range = parseReportRange('2026-10-01', '2026-10-03');
+    assert.deepEqual(range.days, ['2026-10-01', '2026-10-02', '2026-10-03']);
+    assert.equal(localDateKey(range.start), '2026-10-01');
+    assert.equal(localDateKey(range.end), '2026-10-04');
+    assert.deepEqual(parseReportRange('2026-10-05', '2026-10-05').days, ['2026-10-05']);
+  });
+
+  test('parseReportRange rechaza fechas inválidas, invertidas o un rango demasiado largo', () => {
+    assert.equal(parseReportRange('2026-02-31', '2026-03-01'), null);
+    assert.equal(parseReportRange('2026-10-03', '2026-10-01'), null);
+    assert.equal(parseReportRange('ayer', '2026-10-01'), null);
+    assert.equal(parseReportRange(undefined, undefined), null);
+    assert.equal(parseReportRange('2024-01-01', '2026-01-01'), null);
+    assert.equal(parseReportRange('2025-01-01', '2025-12-31').days.length, 365);
+    assert.ok(MAX_REPORT_DAYS >= 366);
+  });
+
+  test('buildSalesReport suma por día, por producto y por visita', () => {
+    const day1 = new Date(2026, 9, 1, 12).toISOString();
+    const day1Later = new Date(2026, 9, 1, 20).toISOString();
+    const day2 = new Date(2026, 9, 2, 10).toISOString();
+    const espresso = (quantity) => ({ productId: 'm1', name: 'Espresso', price: 1800, quantity });
+    const medialuna = (quantity) => ({ productId: 'm8', name: 'Medialuna', price: 800, quantity });
+    const report = buildSalesReport({
+      days: ['2026-10-01', '2026-10-02', '2026-10-03'],
+      // Mesa 1: una visita con dos pedidos (mismo closedAt). Mesa 2: dos visitas.
+      paidOrders: [
+        { tableId: '1', closedAt: day1, items: [espresso(1)] },
+        { tableId: '1', closedAt: day1, items: [medialuna(2)] },
+        { tableId: '2', closedAt: day1Later, items: [espresso(2)] },
+        { tableId: '2', closedAt: day2, items: [medialuna(1), espresso(1)] }
+      ],
+      cancelledCount: 3,
+      closures: [{ closedAt: day2, total: 1, ordersCount: 1 }]
+    });
+
+    assert.equal(report.total, 1800 + 1600 + 3600 + 2600);
+    assert.equal(report.ordersCount, 4);
+    assert.equal(report.visitsCount, 3);
+    assert.equal(report.averageTicket, Math.round(9600 / 3));
+    assert.equal(report.cancelledCount, 3);
+    assert.deepEqual(report.byDay, [
+      { date: '2026-10-01', total: 7000, orders: 3 },
+      { date: '2026-10-02', total: 2600, orders: 1 },
+      { date: '2026-10-03', total: 0, orders: 0 }
+    ]);
+    assert.deepEqual(report.topProducts.map(p => [p.name, p.quantity, p.total]), [
+      ['Espresso', 4, 7200],
+      ['Medialuna', 3, 2400]
+    ]);
+    assert.equal(report.closures.length, 1);
+  });
+
+  test('buildSalesReport sin ventas', () => {
+    const report = buildSalesReport({ days: ['2026-10-01'], paidOrders: [] });
+    assert.equal(report.total, 0);
+    assert.equal(report.averageTicket, 0);
+    assert.deepEqual(report.topProducts, []);
   });
 });

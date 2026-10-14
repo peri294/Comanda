@@ -15,7 +15,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /(close-table|write-failure|day-cycle|sessions)\.spec\.js/,
+      testIgnore: /(close-table|reports|write-failure|day-cycle|sessions)\.spec\.js/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -27,11 +27,19 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
     {
+      // Cobra una mesa y compara el reporte del día antes y después: nada más puede
+      // cobrar en el medio.
+      name: 'reports',
+      testMatch: /reports\.spec\.js/,
+      dependencies: ['close-table'],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
       // Hace fallar las escrituras de pedidos en la base: cualquier otro spec que pida en
       // paralelo fallaría, así que corre solo, cuando terminaron todos.
       name: 'write-failure',
       testMatch: /write-failure\.spec\.js/,
-      dependencies: ['close-table'],
+      dependencies: ['reports'],
       use: { ...devices['Desktop Chrome'] },
     },
     {

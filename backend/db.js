@@ -120,6 +120,8 @@ addColumnIfMissing('tables', 'qr_token', 'TEXT');
 addColumnIfMissing('tables', 'enabled', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('tables', 'block_on_close', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('menu', 'image_id', 'TEXT');
+// Los reportes y la caja filtran los pedidos cobrados por momento del cobro.
+db.exec('CREATE INDEX IF NOT EXISTS idx_orders_closed_at ON orders(closed_at)');
 
 // --- PREPARED STATEMENTS ---
 
@@ -411,6 +413,25 @@ export const saveSettings = (settings) => {
     for (const [key, value] of Object.entries(settings)) upsertSettingStmt.run(key, value);
   });
 };
+
+// --- REPORTES ---
+
+// Datos crudos de un reporte de ventas entre dos instantes ([desde, hasta)). La
+// agregación es de domain.js (buildSalesReport), igual que la caja suma los items en JS.
+// Los cancelados no tienen closed_at: se cuentan por la fecha en que se pidieron.
+export const getSalesReportData = (startIso, endIso) => ({
+  paidOrders: db
+    .prepare("SELECT table_id, items, closed_at FROM orders WHERE archived = 1 AND status = 'entregado' AND closed_at >= ? AND closed_at < ?")
+    .all(startIso, endIso)
+    .map(row => ({ tableId: row.table_id, items: JSON.parse(row.items), closedAt: row.closed_at })),
+  cancelledCount: db
+    .prepare("SELECT COUNT(*) AS n FROM orders WHERE status = 'cancelado' AND created_at >= ? AND created_at < ?")
+    .get(startIso, endIso).n,
+  closures: db
+    .prepare('SELECT closed_at, total, orders_count FROM register_closures WHERE closed_at >= ? AND closed_at < ? ORDER BY closed_at')
+    .all(startIso, endIso)
+    .map(row => ({ closedAt: row.closed_at, total: row.total, ordersCount: row.orders_count }))
+});
 
 // Solo para los tests E2E: hace que SQLite rechace toda escritura en la tabla `orders`
 // (o la vuelve a permitir), para probar qué pasa cuando una escritura falla. Es un

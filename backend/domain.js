@@ -346,3 +346,82 @@ export const reorderCategories = (orderedIds, categories) => {
   });
   return reordered.every(Boolean) ? reordered : null;
 };
+
+// --- REPORTES DE VENTAS ---
+
+export const MAX_REPORT_DAYS = 366;
+
+// Fecha local (zona horaria del server, variable TZ) como 'AAAA-MM-DD'. Los reportes
+// agrupan por el día del local, no por el día UTC: en Argentina el día UTC cambia a las 21.
+export const localDateKey = (date) => {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const parseDateKey = (key) => {
+  const match = typeof key === 'string' && key.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const [, y, m, d] = match.map(Number);
+  const date = new Date(y, m - 1, d);
+  // new Date(2026, 1, 31) "corrige" a marzo: una fecha inexistente se rechaza.
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d ? date : null;
+};
+
+// Rango de un reporte, con los dos extremos incluidos y en días locales. Devuelve el
+// instante de inicio (medianoche del primer día), el de fin (medianoche del día siguiente
+// al último) y la lista de días, o null si las fechas no son válidas, están invertidas o
+// superan MAX_REPORT_DAYS.
+export const parseReportRange = (from, to) => {
+  const start = parseDateKey(from);
+  const last = parseDateKey(to);
+  if (!start || !last || last < start) return null;
+  const days = [];
+  for (const d = new Date(start); d <= last; d.setDate(d.getDate() + 1)) {
+    days.push(localDateKey(d));
+    if (days.length > MAX_REPORT_DAYS) return null;
+  }
+  const end = new Date(last);
+  end.setDate(end.getDate() + 1);
+  return { start, end, days };
+};
+
+// Arma el reporte a partir de los pedidos cobrados del rango ({ tableId, items, closedAt }).
+// Una "visita" es un cobro de mesa: close-table sella el mismo closedAt en todos sus
+// pedidos, así que el ticket promedio es por mesa cobrada y no por pedido.
+export const buildSalesReport = ({ days, paidOrders, cancelledCount = 0, closures = [] }) => {
+  const byDay = new Map(days.map(day => [day, { date: day, total: 0, orders: 0 }]));
+  const products = new Map();
+  const visits = new Set();
+  let total = 0;
+
+  for (const order of paidOrders) {
+    const orderTotal = itemsTotal(order.items);
+    total += orderTotal;
+    visits.add(`${order.tableId}|${order.closedAt}`);
+    const day = byDay.get(localDateKey(order.closedAt));
+    if (day) {
+      day.total += orderTotal;
+      day.orders += 1;
+    }
+    for (const item of order.items) {
+      // Por id de producto, con el nombre del último pedido: un producto renombrado
+      // sigue sumando en la misma fila.
+      const row = products.get(item.productId) || { productId: item.productId, name: item.name, quantity: 0, total: 0 };
+      row.name = item.name;
+      row.quantity += item.quantity;
+      row.total += item.price * item.quantity;
+      products.set(item.productId, row);
+    }
+  }
+
+  return {
+    total,
+    ordersCount: paidOrders.length,
+    visitsCount: visits.size,
+    averageTicket: visits.size > 0 ? Math.round(total / visits.size) : 0,
+    cancelledCount,
+    byDay: [...byDay.values()],
+    topProducts: [...products.values()].sort((a, b) => b.quantity - a.quantity || b.total - a.total),
+    closures
+  };
+};

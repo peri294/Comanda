@@ -28,7 +28,8 @@ import {
   getImage,
   imageExists,
   deleteImage,
-  deleteUnusedImages
+  deleteUnusedImages,
+  getSalesReportData
 } from './db.js';
 import {
   newQrToken,
@@ -56,7 +57,9 @@ import {
   reorderCategories,
   newImageId,
   isImageId,
-  decodeImageUpload
+  decodeImageUpload,
+  parseReportRange,
+  buildSalesReport
 } from './domain.js';
 import { passwordMatches, createSessionStore, createLoginThrottle } from './auth.js';
 
@@ -499,6 +502,15 @@ app.get('/api/initial-state', requireStaffAuth, (req, res) => {
     // navegador: así una recarga de la página del mostrador no la resetea a $0.
     dailySales: getDailySalesTotal()
   });
+});
+
+// Reporte de ventas entre dos fechas locales incluidas (?from=AAAA-MM-DD&to=AAAA-MM-DD),
+// solo para el mostrador. Los días son los de la zona horaria del server (variable TZ).
+app.get('/api/reports', requireRole('counter'), (req, res) => {
+  const range = parseReportRange(req.query.from, req.query.to);
+  if (!range) return res.status(400).json({ error: 'Rango de fechas inválido' });
+  const data = getSalesReportData(range.start.toISOString(), range.end.toISOString());
+  res.json({ from: req.query.from, to: req.query.to, ...buildSalesReport({ days: range.days, ...data }) });
 });
 
 // Vuelve el estado (memoria y SQLite, incluido el historial de pedidos archivados) a
