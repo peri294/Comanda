@@ -16,9 +16,9 @@ export default function App() {
   // Links con token de las mesas para el simulador de QR del portal. null mientras carga
   // o si el backend no los expone (en producción no existe el endpoint de demo).
   const [demoTableLinks, setDemoTableLinks] = useState(null);
-  // Contraseñas de la demo pública ({ credentials, idleResetMinutes }). null si el
-  // backend no corre en modo demo.
-  const [demoInfo, setDemoInfo] = useState(null);
+  // Configuración pública del server (/api/config): { mode, businessName } y, en la demo,
+  // { credentials, idleResetMinutes }. null mientras carga.
+  const [appConfig, setAppConfig] = useState(null);
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const kitchenAuth = useStaffAuth('kitchen');
@@ -67,6 +67,8 @@ export default function App() {
 
     // La demo pública volvió a fábrica: recargar para tomar el estado nuevo de una vez.
     newSocket.on('demo-reset', () => window.location.reload());
+    // El Mostrador cambió el nombre del local: se actualiza en todas las pantallas.
+    newSocket.on('settings-updated', (settings) => setAppConfig(prev => ({ ...prev, ...settings })));
 
     // El socket es una conexión externa que nace con el efecto y muere en su cleanup:
     // guardarlo en el estado es la forma de compartirlo con las vistas.
@@ -126,11 +128,22 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetch(`${BACKEND_URL}/api/demo/info`)
+    fetch(`${BACKEND_URL}/api/config`)
       .then(res => (res.ok ? res.json() : null))
       .catch(() => null)
-      .then(setDemoInfo);
+      .then(setAppConfig);
   }, []);
+
+  const businessName = appConfig?.businessName || '';
+  useEffect(() => {
+    if (businessName) document.title = businessName;
+  }, [businessName]);
+
+  // En producción la raíz es la pantalla del personal: un cliente en su mesa no tiene
+  // nada que hacer ahí, así que su vista no ofrece volver.
+  const isProduction = appConfig?.mode === 'production';
+  const canLeaveView = view !== 'portal' && !(isProduction && view === 'client');
+  const demoCredentials = appConfig?.credentials;
 
   // Se recargan cada vez que se vuelve al portal: el mostrador puede haber agregado,
   // quitado mesas o regenerado un QR mientras tanto.
@@ -148,9 +161,13 @@ export default function App() {
     <div className="app-container">
       {/* Universal Header */}
       <header className="header">
-        <div className="logo" onClick={() => navigateTo('portal')} style={{ cursor: 'pointer' }}>
+        <div
+          className="logo"
+          onClick={canLeaveView ? () => navigateTo('portal') : undefined}
+          style={{ cursor: canLeaveView ? 'pointer' : 'default' }}
+        >
           <Coffee style={{ color: 'var(--accent-gold)' }} />
-          <span>CAFÉ</span> PREMIUM
+          <span className="logo-name">{businessName}</span>
         </div>
 
         <div className="header-actions">
@@ -177,13 +194,13 @@ export default function App() {
             <span className="header-status-text">{isConnected ? 'Servidor Conectado' : 'Sin Conexión'}</span>
           </span>
 
-          {view !== 'portal' && (
+          {canLeaveView && (
             <button 
               className="btn-secondary" 
               style={{ padding: '6px 12px', fontSize: '0.8rem', borderRadius: '8px' }}
               onClick={() => navigateTo('portal')}
             >
-              Volver al Portal
+              {isProduction ? 'Inicio' : 'Volver al Portal'}
             </button>
           )}
         </div>
@@ -204,21 +221,23 @@ export default function App() {
           kitchenAuth.token ? (
             <KitchenView socket={socket} token={kitchenAuth.token} onLogout={kitchenAuth.logout} />
           ) : (
-            <StaffLogin role="kitchen" onLogin={kitchenAuth.login} error={kitchenAuth.error} loading={kitchenAuth.loading} demoPassword={demoInfo?.credentials.kitchen} />
+            <StaffLogin role="kitchen" onLogin={kitchenAuth.login} error={kitchenAuth.error} loading={kitchenAuth.loading} demoPassword={demoCredentials?.kitchen} />
           )
         )}
 
         {/* VIEW 3: Counter/Manager Dashboard (detrás de login de personal) */}
         {view === 'counter' && (
           counterAuth.token ? (
-            <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} />
+            <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} businessName={businessName} />
           ) : (
-            <StaffLogin role="counter" onLogin={counterAuth.login} error={counterAuth.error} loading={counterAuth.loading} demoPassword={demoInfo?.credentials.counter} />
+            <StaffLogin role="counter" onLogin={counterAuth.login} error={counterAuth.error} loading={counterAuth.loading} demoPassword={demoCredentials?.counter} />
           )
         )}
 
-        {/* VIEW 4: Simulator Portal */}
-        {view === 'portal' && (
+        {/* VIEW 4: Portal. En demo y desarrollo, el simulador con las mesas; en producción,
+            solo el acceso a las pantallas del personal. Se espera a /api/config para no
+            mostrar un instante el simulador en un local real. */}
+        {view === 'portal' && appConfig && (
           <div className="animate-fade-in" style={{ maxWidth: '1000px', margin: '0 auto' }}>
             
             {/* Hero Section */}
@@ -227,15 +246,17 @@ export default function App() {
                 <Coffee size={50} style={{ color: 'var(--accent-gold)' }} />
               </div>
               <h1 style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '10px' }}>
-                Sistema de Pedidos QR para Cafetería
+                {isProduction ? businessName : 'Sistema de Pedidos QR para Cafetería'}
               </h1>
               <p style={{ color: 'var(--text-secondary)', maxWidth: '600px', margin: '0 auto 24px auto', fontSize: '1rem', lineHeight: '1.6' }}>
-                Bienvenido al simulador interactivo. Desde aquí puedes abrir las diferentes pantallas para ver cómo interactúan en tiempo real mediante WebSockets.
+                {isProduction
+                  ? 'Pantallas del personal. Elegí la de este dispositivo e ingresá la contraseña del rol.'
+                  : 'Bienvenido al simulador interactivo. Desde aquí puedes abrir las diferentes pantallas para ver cómo interactúan en tiempo real mediante WebSockets.'}
               </p>
-              {demoInfo && (
+              {demoCredentials && (
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', maxWidth: '600px', margin: '0 auto 24px auto' }}>
-                  Demo pública: contraseña de Mostrador <strong>{demoInfo.credentials.counter}</strong> y de Cocina <strong>{demoInfo.credentials.kitchen}</strong>.
-                  Los cambios son compartidos con otros visitantes y todo vuelve al estado inicial tras {demoInfo.idleResetMinutes} minutos sin uso.
+                  Demo pública: contraseña de Mostrador <strong>{demoCredentials.counter}</strong> y de Cocina <strong>{demoCredentials.kitchen}</strong>.
+                  Los cambios son compartidos con otros visitantes y todo vuelve al estado inicial tras {appConfig.idleResetMinutes} minutos sin uso.
                 </p>
               )}
               
@@ -255,7 +276,7 @@ export default function App() {
               {[
                 {
                   view: 'counter', Icon: Monitor, title: 'Pantalla del Mostrador', button: 'Abrir Mostrador',
-                  text: 'Vista para el cajero/encargado. Monitorea las 12 mesas, muestra los pedidos y totales en consumo, recibe alertas de solicitudes de cierre de cuenta y procesa cobros.'
+                  text: 'Vista para el cajero/encargado. Monitorea las mesas, muestra los pedidos y totales en consumo, recibe alertas de solicitudes de cierre de cuenta y procesa cobros.'
                 },
                 {
                   view: 'kitchen', Icon: ChefHat, title: 'Monitor de Cocina', button: 'Abrir Cocina',
@@ -282,7 +303,8 @@ export default function App() {
 
             </div>
 
-            {/* QR Simulator Tables Grid */}
+            {/* QR Simulator Tables Grid (solo demo y desarrollo) */}
+            {!isProduction && (
             <div className="glass-panel qr-simulator-box">
               <h3 style={{ fontSize: '1.25rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
                 <Coffee style={{ color: 'var(--accent-gold)' }} /> Simulador de Códigos QR en Mesas
@@ -325,6 +347,7 @@ export default function App() {
                 })}
               </div>
             </div>
+            )}
 
           </div>
         )}

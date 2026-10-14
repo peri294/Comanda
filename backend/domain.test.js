@@ -10,6 +10,8 @@ import {
   applyEnabled,
   closedTable,
   closeOrders,
+  sanitizeSettings,
+  MAX_BUSINESS_NAME_LENGTH,
   sanitizeItems,
   sanitizeNotes,
   sanitizeMenuFields,
@@ -259,5 +261,23 @@ describe('resolveNewTableId', () => {
     assert.equal(resolveNewTableId(['1'], 0), null);
     assert.equal(resolveNewTableId(['1'], '2.5'), null);
     assert.equal(resolveNewTableId(['1'], 'abc'), null);
+  });
+});
+
+describe('sanitizeSettings', () => {
+  test('recorta el nombre y lo devuelve con la clave de la base', () => {
+    assert.deepEqual(sanitizeSettings({ businessName: '  Café Central  ' }), { business_name: 'Café Central' });
+  });
+
+  test('corta el nombre en el máximo', () => {
+    const { business_name } = sanitizeSettings({ businessName: 'x'.repeat(200) });
+    assert.equal(business_name.length, MAX_BUSINESS_NAME_LENGTH);
+  });
+
+  test('sin campos válidos devuelve null', () => {
+    assert.equal(sanitizeSettings({ businessName: '   ' }), null);
+    assert.equal(sanitizeSettings({ businessName: 42 }), null);
+    assert.equal(sanitizeSettings({}), null);
+    assert.equal(sanitizeSettings(), null);
   });
 });

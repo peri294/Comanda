@@ -85,5 +85,5 @@ test('el mostrador se resincroniza al reconectar el socket', async ({ browser })
   // Al reconectar, el refetch del estado inicial rehidrata el panel
   await counterPage.evaluate(() => window.__socket.connect());
   await expect(mesa6Card).toContainText('Pedido Recibido', { timeout: 15000 });
-  await expect(mesa6Card).toContainText('$1800');
+  await expect(mesa6Card).toContainText('$1.800');
 });

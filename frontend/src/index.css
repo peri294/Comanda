@@ -274,6 +274,17 @@ body {
   color: var(--accent-gold);
 }
 
+/* Nombre del local (configurable desde el Mostrador): uno largo se corta con "…" en vez
+   de empujar los botones del header fuera de la pantalla. */
+.logo .logo-name {
+  color: var(--text-primary);
+  text-transform: uppercase;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .header-actions {
   display: flex;
   align-items: center;

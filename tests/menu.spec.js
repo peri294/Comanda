@@ -28,18 +28,18 @@ test('menú administrable: CRUD, stock en vivo y seguridad', async ({ browser })
 
   const adminRow = counterPage.locator('.menu-admin-row', { hasText: 'Café de Especialidad' });
   await expect(adminRow).toBeVisible({ timeout: 10000 });
-  await expect(adminRow.getByText('$3200')).toBeVisible();
+  await expect(adminRow.getByText('$3.200')).toBeVisible();
 
   // El cliente lo ve EN VIVO, sin recargar la página
   const clientCard = clientPage.locator('.menu-card', { hasText: 'Café de Especialidad' });
   await expect(clientCard).toBeVisible({ timeout: 10000 });
-  await expect(clientCard.getByText('$3200')).toBeVisible();
+  await expect(clientCard.getByText('$3.200')).toBeVisible();
 
   // 2. EDICIÓN DE PRECIO, REFLEJADA EN VIVO EN EL CLIENTE
   await adminRow.getByTitle('Editar Café de Especialidad').click();
   await counterPage.getByPlaceholder('Precio').fill('3600');
   await counterPage.getByRole('button', { name: /guardar cambios/i }).click();
-  await expect(clientCard.getByText('$3600')).toBeVisible({ timeout: 10000 });
+  await expect(clientCard.getByText('$3.600')).toBeVisible({ timeout: 10000 });
 
   // 3. CARRITO REACTIVO + AGOTADO
   // El cliente lo agrega al carrito; el mostrador lo marca agotado: el catálogo lo

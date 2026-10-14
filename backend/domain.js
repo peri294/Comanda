@@ -268,3 +268,18 @@ export const sanitizeMenuFields = ({ name, description, price, category, image }
     image: (typeof image === 'string' && image.trim()) || 'coffee'
   };
 };
+
+// --- CONFIGURACIÓN DEL LOCAL ---
+
+export const MAX_BUSINESS_NAME_LENGTH = 60;
+
+// Ajustes que el Mostrador puede cambiar. Devuelve solo los campos válidos que vinieron
+// (un formulario puede mandar uno solo), o null si no quedó ninguno.
+export const sanitizeSettings = ({ businessName } = {}) => {
+  const clean = {};
+  if (typeof businessName === 'string') {
+    const name = businessName.trim().slice(0, MAX_BUSINESS_NAME_LENGTH);
+    if (name) clean.business_name = name;
+  }
+  return Object.keys(clean).length > 0 ? clean : null;
+};

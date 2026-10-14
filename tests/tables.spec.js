@@ -39,7 +39,7 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
 
   // La mesa nueva pasa a ocupada en el mostrador, con el consumo del pedido
   await expect(mesa13.getByText('Pedido Recibido')).toBeVisible({ timeout: 15000 });
-  await expect(mesa13.getByText('$1800')).toBeVisible();
+  await expect(mesa13.getByText('$1.800')).toBeVisible();
 
   // 3. UNA MESA OCUPADA NO SE PUEDE QUITAR (el botón de baja solo existe en mesas libres)
   await expect(mesa13.getByTitle('Dar de baja la Mesa 13')).toHaveCount(0);
@@ -60,18 +60,18 @@ test('alta y baja de mesas desde el mostrador', async ({ browser }) => {
   // 5. LA CAJA DEL DÍA REFLEJA EL COBRO Y SOBREVIVE A UNA RECARGA
   // (este es el único test de la suite que cierra mesas, así que el valor es exacto)
   const cajaPanel = counterPage.locator('.glass-panel', { hasText: 'Caja del Día' });
-  await expect(cajaPanel.getByText('$1800')).toBeVisible({ timeout: 10000 });
+  await expect(cajaPanel.getByText('$1.800')).toBeVisible({ timeout: 10000 });
   // Antes la caja era un contador local del navegador: recargar la volvía a $0.
   // Ahora la calcula el server desde la DB (pedidos cobrados hoy).
   await counterPage.reload();
-  await expect(cajaPanel.getByText('$1800')).toBeVisible({ timeout: 15000 });
+  await expect(cajaPanel.getByText('$1.800')).toBeVisible({ timeout: 15000 });
 
   // 6. CERRAR CAJA: queda registrado el cierre y la caja arranca de nuevo en $0
   counterPage.once('dialog', dialog => dialog.accept());
   await counterPage.getByRole('button', { name: /cerrar caja/i }).click();
   await expect(cajaPanel.getByText('$0')).toBeVisible({ timeout: 10000 });
   await expect(counterPage.getByText('Caja cerrada')).toBeVisible();
-  await expect(counterPage.getByText('Cierre por $1800 (1 pedido cobrado).')).toBeVisible();
+  await expect(counterPage.getByText('Cierre por $1.800 (1 pedido cobrado).')).toBeVisible();
   // El cierre también persiste: tras recargar, la caja sigue en $0 (no vuelve a $1800)
   await counterPage.reload();
   await expect(cajaPanel.getByText('$0')).toBeVisible({ timeout: 15000 });

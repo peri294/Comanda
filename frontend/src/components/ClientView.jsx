@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
+import { formatPrice } from '../utils/format';
 import { MENU_CATEGORIES } from '../menuCategories';
 
 const categories = [{ id: 'todos', label: 'Todo' }, ...MENU_CATEGORIES];
@@ -432,14 +433,14 @@ export default function ClientView({ tableId, qrToken, socket }) {
                   {order.items.map((item, idx) => (
                     <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', padding: '4px 0' }}>
                       <span>{item.quantity}x {item.name}</span>
-                      <span>${item.price * item.quantity}</span>
+                      <span>{formatPrice(item.price * item.quantity)}</span>
                     </div>
                   ))}
                 </div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-color)' }}>
                 <span>Total:</span>
-                <span style={{ color: 'var(--accent-gold)' }}>${tableState.total}</span>
+                <span style={{ color: 'var(--accent-gold)' }}>{formatPrice(tableState.total)}</span>
               </div>
             </div>
           )}
@@ -451,7 +452,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
         <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px', textAlign: 'center' }}>
           <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '8px' }}>¿Deseas cerrar tu cuenta?</h3>
           <p style={{ color: 'var(--text-secondary)', marginBottom: '16px', fontSize: '0.9rem' }}>
-            Consumo total actual: <span style={{ fontWeight: 700, color: 'var(--accent-gold)', fontSize: '1.1rem' }}>${tableState.total}</span>
+            Consumo total actual: <span style={{ fontWeight: 700, color: 'var(--accent-gold)', fontSize: '1.1rem' }}>{formatPrice(tableState.total)}</span>
           </p>
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
             <button className="btn-primary" onClick={() => requestBill('efectivo')}>
@@ -519,7 +520,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
               <p className="menu-card-description">{item.description}</p>
 
               <div className="menu-card-footer">
-                <span className="menu-card-price">${item.price}</span>
+                <span className="menu-card-price">{formatPrice(item.price)}</span>
                 {item.available === false ? (
                   <button
                     className="btn-secondary"
@@ -571,7 +572,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
                 <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--border-color)' }}>
                   <div>
                     <h4 style={{ fontWeight: 600 }}>{item.name}</h4>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>${item.price} c/u</span>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{formatPrice(item.price)} c/u</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <button className="btn-secondary" style={{ padding: '6px', borderRadius: '6px' }} onClick={() => updateQuantity(item.id, -1)}>
@@ -612,7 +613,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
               <span style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Total:</span>
-              <span style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-gold)' }}>${cartTotal}</span>
+              <span style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-gold)' }}>{formatPrice(cartTotal)}</span>
             </div>
 
             {billRequested && (

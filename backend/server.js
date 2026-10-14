@@ -19,7 +19,9 @@ import {
   runInTransaction,
   getDailySalesTotal,
   closeRegister,
-  setOrderWritesFailing
+  setOrderWritesFailing,
+  getSettings,
+  saveSettings
 } from './db.js';
 import {
   newQrToken,
@@ -39,7 +41,8 @@ import {
   isKitchenVisible,
   requestBill,
   assistanceDecision,
-  closeOrders
+  closeOrders,
+  sanitizeSettings
 } from './domain.js';
 import { passwordMatches, createSessionStore, createLoginThrottle } from './auth.js';
 
@@ -51,6 +54,19 @@ const DEV_MODE = process.env.DEV_MODE === '1';
 // Demo pública del portfolio: expone los links de las mesas y las contraseñas en el
 // portal, y vuelve el estado a fábrica cuando nadie la usa (ver DEMO_IDLE_MINUTES).
 const DEMO_MODE = process.env.DEMO_MODE === '1';
+// Lo que ve el frontend: en producción la raíz es la pantalla del personal; en demo y
+// desarrollo, el simulador con los links de las mesas.
+const APP_MODE = DEMO_MODE ? 'demo' : DEV_MODE ? 'dev' : 'production';
+
+// Ajustes del local hasta que el Mostrador los cambie (ver la tabla settings).
+const DEFAULT_SETTINGS = {
+  business_name: DEMO_MODE || DEV_MODE ? 'Café Premium' : 'Mi Cafetería'
+};
+// Forma en que los ajustes viajan al frontend (camelCase, sin las claves de la base).
+const publicSettings = () => {
+  const settings = getSettings(DEFAULT_SETTINGS);
+  return { businessName: settings.business_name };
+};
 
 // --- AUTENTICACION DE PERSONAL ---
 // Password compartida por rol (cocina/mostrador), pensada para una tablet compartida
@@ -483,11 +499,16 @@ const resetDemo = () => {
   console.log('Demo reiniciada al estado de fábrica');
 };
 
-if (DEMO_MODE) {
-  app.get('/api/demo/info', (req, res) => {
-    res.json({ credentials: ROLE_PASSWORDS, idleResetMinutes: DEMO_IDLE_MINUTES });
+// Configuración pública que el frontend necesita antes de cualquier login: el modo
+// (decide qué muestra la raíz) y la identidad del local. En la demo suma las contraseñas
+// del personal, que se muestran en el portal.
+app.get('/api/config', (req, res) => {
+  res.json({
+    mode: APP_MODE,
+    ...publicSettings(),
+    ...(DEMO_MODE && { credentials: ROLE_PASSWORDS, idleResetMinutes: DEMO_IDLE_MINUTES })
   });
-}
+});
 
 // --- WEBSOCKETS (SOCKET.IO) ---
 
@@ -911,6 +932,15 @@ io.on('connection', (socket) => {
     menuCache = menuCache.filter(m => m.id !== id);
     deleteMenuItem(id);
     io.emit('menu-updated', menuCache);
+  });
+
+  // Evento: Cambiar la configuración del local (desde Mostrador). Todas las pantallas,
+  // mesas incluidas, actualizan el nombre en vivo.
+  staffOn('counter', 'update-settings', (data) => {
+    const settings = sanitizeSettings(data);
+    if (!settings) return;
+    saveSettings(settings);
+    io.emit('settings-updated', publicSettings());
   });
 
   // Evento: Cerrar la caja (desde Mostrador). Registra un cierre en el histórico con

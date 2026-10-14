@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon, ShieldOff } from 'lucide-react';
+import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon, ShieldOff, Settings } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
+import { formatPrice } from '../utils/format';
 import TableQrModal from './TableQrModal';
+import SettingsModal from './SettingsModal';
 import { createAudioContext, playTone } from '../utils/sound';
 import { MENU_CATEGORIES } from '../menuCategories';
 
@@ -45,7 +47,7 @@ const playNotificationSound = (type = 'success') => {
   }
 };
 
-export default function CounterView({ socket, token, onLogout }) {
+export default function CounterView({ socket, token, onLogout, businessName }) {
   const [tables, setTables] = useState([]);
   const [activeOrders, setActiveOrders] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -68,6 +70,7 @@ export default function CounterView({ socket, token, onLogout }) {
 
   // Administración del menú (alta/edición/baja/stock de productos)
   const [isMenuAdminOpen, setIsMenuAdminOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const emptyMenuForm = { id: null, name: '', description: '', price: '', category: 'bebidas_calientes' };
   const [menuForm, setMenuForm] = useState(emptyMenuForm);
 
@@ -141,7 +144,7 @@ export default function CounterView({ socket, token, onLogout }) {
 
     // Bill requested notification
     socket.on('bill-requested', ({ tableId, paymentMethod, total }) => {
-      notify('bill_requested', 'Solicitud de cuenta', `Mesa ${tableId} solicita cerrar cuenta en ${paymentMethod === 'efectivo' ? 'Efectivo' : 'Tarjeta'}. Total: $${total}`, 'alert');
+      notify('bill_requested', 'Solicitud de cuenta', `Mesa ${tableId} solicita cerrar cuenta en ${paymentMethod === 'efectivo' ? 'Efectivo' : 'Tarjeta'}. Total: ${formatPrice(total)}`, 'alert');
     });
 
     // La mesa pidió algo más después de pedir la cuenta: la solicitud queda cancelada
@@ -158,7 +161,7 @@ export default function CounterView({ socket, token, onLogout }) {
 
     // Alguien cerró la caja (puede haber sido otra pestaña/tablet de mostrador)
     socket.on('register-closed', ({ total, ordersCount }) => {
-      notify('register_closed', 'Caja cerrada', `Cierre por $${total} (${ordersCount} ${ordersCount === 1 ? 'pedido cobrado' : 'pedidos cobrados'}).`, 'success');
+      notify('register_closed', 'Caja cerrada', `Cierre por ${formatPrice(total)} (${ordersCount} ${ordersCount === 1 ? 'pedido cobrado' : 'pedidos cobrados'}).`, 'success');
     });
 
     // Respuesta a "Cerrar otras sesiones": cuántas pantallas volvieron al login
@@ -296,7 +299,7 @@ export default function CounterView({ socket, token, onLogout }) {
   const handleEndDay = () => {
     if (!window.confirm('¿Cerrar el día? Las mesas libres se bloquean ahora; las ocupadas se bloquean al cobrarlas.')) return;
     socket.emit('end-day');
-    if (window.confirm(`¿Cerrar también la caja? Se registrará un cierre por $${dailySales}.`)) {
+    if (window.confirm(`¿Cerrar también la caja? Se registrará un cierre por ${formatPrice(dailySales)}.`)) {
       socket.emit('close-register');
     }
   };
@@ -373,7 +376,7 @@ export default function CounterView({ socket, token, onLogout }) {
   // Cierre de caja: el server sella el total real desde el cierre anterior; el monto
   // del confirm es informativo (lo que muestra la pantalla en este momento).
   const handleCloseRegister = () => {
-    if (!window.confirm(`¿Cerrar la caja? Se registrará un cierre por $${dailySales} y la caja arranca de nuevo en $0.`)) return;
+    if (!window.confirm(`¿Cerrar la caja? Se registrará un cierre por ${formatPrice(dailySales)} y la caja arranca de nuevo en $0.`)) return;
     socket.emit('close-register');
   };
 
@@ -404,7 +407,7 @@ export default function CounterView({ socket, token, onLogout }) {
           {[
             ['Mesas Activas', `${tablesOccupied} / ${tables.length}`, 'var(--accent-gold)'],
             ['Cuentas Pendientes', tablesWaitingBill, 'var(--danger)'],
-            ['Caja del Día', `$${dailySales}`, 'var(--success)']
+            ['Caja del Día', formatPrice(dailySales), 'var(--success)']
           ].map(([label, value, color]) => (
             <div key={label} className="glass-panel" style={{ padding: '10px 20px', textAlign: 'center', minWidth: '110px' }}>
               <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600 }}>{label}</span>
@@ -450,6 +453,14 @@ export default function CounterView({ socket, token, onLogout }) {
             title="Administrar los productos del menú (precios, stock, altas y bajas)"
           >
             <BookOpen size={16} /> Administrar Menú
+          </button>
+          <button
+            className="btn-secondary"
+            style={headerButtonStyle}
+            onClick={() => setIsSettingsOpen(true)}
+            title="Nombre del local y otros ajustes"
+          >
+            <Settings size={16} /> Configuración
           </button>
           <button
             className="btn-secondary"
@@ -541,7 +552,7 @@ export default function CounterView({ socket, token, onLogout }) {
                         Total consumo:
                       </div>
                       <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-gold)' }}>
-                        ${table.total}
+                        {formatPrice(table.total)}
                       </div>
                       {order && (
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
@@ -666,6 +677,10 @@ export default function CounterView({ socket, token, onLogout }) {
 
       </div>
 
+      {isSettingsOpen && (
+        <SettingsModal socket={socket} businessName={businessName} onClose={() => setIsSettingsOpen(false)} />
+      )}
+
       {/* Menu Admin Modal */}
       {isMenuAdminOpen && (
         <div className="modal-overlay" onClick={closeMenuAdmin}>
@@ -756,7 +771,7 @@ export default function CounterView({ socket, token, onLogout }) {
                       )}
                     </div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                      ${item.price} · {item.category.replace('_', ' ')}
+                      {formatPrice(item.price)} · {item.category.replace('_', ' ')}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
@@ -899,7 +914,7 @@ export default function CounterView({ socket, token, onLogout }) {
                             {order.items.map((item, idx) => (
                               <li key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed rgba(255,255,255,0.05)' }}>
                                 <span><strong style={{ color: 'var(--accent-gold)' }}>{item.quantity}x</strong> {item.name}</span>
-                                <span>${item.price * item.quantity}</span>
+                                <span>{formatPrice(item.price * item.quantity)}</span>
                               </li>
                             ))}
                           </ul>
@@ -916,7 +931,7 @@ export default function CounterView({ socket, token, onLogout }) {
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border-color)', fontSize: '1.25rem', fontWeight: 800 }}>
                     <span>Total Consumido:</span>
-                    <span style={{ color: 'var(--accent-gold)' }}>${selectedTable.total}</span>
+                    <span style={{ color: 'var(--accent-gold)' }}>{formatPrice(selectedTable.total)}</span>
                   </div>
                 </div>
               ) : (

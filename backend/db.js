@@ -79,6 +79,13 @@ db.exec(`
     total        REAL NOT NULL,
     orders_count INTEGER NOT NULL
   );
+
+  -- Configuración del local que se edita desde el Mostrador (nombre, logo). Clave/valor:
+  -- cada ajuste nuevo es una fila más, sin migraciones de columnas.
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `);
 
 // Migraciones para bases creadas antes de que existieran estas columnas (CREATE TABLE
@@ -313,6 +320,26 @@ export const closeRegister = () => {
   return { closedAt, total, ordersCount };
 };
 
+// --- CONFIGURACIÓN DEL LOCAL ---
+
+const upsertSettingStmt = db.prepare(`
+  INSERT INTO settings (key, value) VALUES (?, ?)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`);
+
+// Los ajustes guardados, sobre los valores por defecto (un ajuste que nunca se tocó no
+// tiene fila).
+export const getSettings = (defaults) => ({
+  ...defaults,
+  ...Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().map(row => [row.key, row.value]))
+});
+
+export const saveSettings = (settings) => {
+  runInTransaction(() => {
+    for (const [key, value] of Object.entries(settings)) upsertSettingStmt.run(key, value);
+  });
+};
+
 // Solo para los tests E2E: hace que SQLite rechace toda escritura en la tabla `orders`
 // (o la vuelve a permitir), para probar qué pasa cuando una escritura falla. Es un
 // trigger TEMP: vive en esta conexión y desaparece al reiniciar el server.
@@ -330,7 +357,7 @@ export const setOrderWritesFailing = (failing) => {
 // en un despliegue real (producción sin DEMO_MODE) no se llama nunca.
 export const resetState = (initialTables, defaultMenu) => {
   runInTransaction(() => {
-    db.exec('DELETE FROM orders; DELETE FROM assistance_requests; DELETE FROM register_closures; DELETE FROM tables; DELETE FROM menu;');
+    db.exec('DELETE FROM orders; DELETE FROM assistance_requests; DELETE FROM register_closures; DELETE FROM tables; DELETE FROM menu; DELETE FROM settings;');
     initialTables.forEach(persistTable);
     defaultMenu.forEach(persistMenuItem);
   });
