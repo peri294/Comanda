@@ -226,5 +226,6 @@ Para iniciar la aplicación en tu entorno local:
   - `GET /api/config` informa `imageGeneration`; el modal "Administrar Menú" muestra "Generar con IA" solo para productos sin foto, con vista previa y "Usar esta imagen" / "Generar otra" / "Descartar". La descripción sigue siendo opcional.
   - `npm run dev` carga además `backend/.env.local` si existe (gitignoreado), para poner credenciales locales sin que pasen por el repo.
   - Tests: unit de `imageAI.js` y del prompt (71 en total) y `tests/image-ai.spec.js` (mesa 47) con el proveedor fake; el CI levanta el backend con `IMAGE_AI_PROVIDER=fake`. Suite E2E (40 tests) en verde dos corridas seguidas.
-  - **Pendiente al cerrar este cambio**: probar contra los proveedores reales con credenciales del usuario, para confirmar el formato de las respuestas (la documentación de Gemini no muestra el JSON crudo).
+  - **Probado contra Cloudflare real** (credenciales del usuario en `backend/.env.local`): responde en unos 3 segundos con un JPEG de 1024×1024 (unos 600 KB) en `result.image`, como se esperaba; el flujo completo en el navegador funciona. **Gemini queda sin probar contra el servicio real**: la documentación no muestra el JSON crudo de la respuesta, así que la lectura es defensiva hasta confirmarla con una clave.
+  - Observación de uso: el modelo de Cloudflare no conoce productos locales como la medialuna argentina (dibujó una masa redonda). Una descripción visual ("con forma de croissant pequeño y curvo") ayuda más que el nombre.
 
