@@ -86,6 +86,24 @@ db.exec(`
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- Categorías del menú, administradas desde el Mostrador. Las cuatro originales se
+  -- siembran con sus ids de siempre, así los productos existentes no cambian.
+  CREATE TABLE IF NOT EXISTS categories (
+    id       TEXT PRIMARY KEY,
+    name     TEXT NOT NULL,
+    icon     TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- Fotos de productos y logo del local. Viven en la misma base a propósito: una sola
+  -- cosa que respaldar, y nada que se pierda en un disco efímero (Render).
+  CREATE TABLE IF NOT EXISTS images (
+    id         TEXT PRIMARY KEY,
+    mime       TEXT NOT NULL,
+    data       BLOB NOT NULL,
+    created_at TEXT NOT NULL
+  );
 `);
 
 // Migraciones para bases creadas antes de que existieran estas columnas (CREATE TABLE
@@ -101,6 +119,7 @@ addColumnIfMissing('orders', 'closed_at', 'TEXT');
 addColumnIfMissing('tables', 'qr_token', 'TEXT');
 addColumnIfMissing('tables', 'enabled', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('tables', 'block_on_close', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('menu', 'image_id', 'TEXT');
 
 // --- PREPARED STATEMENTS ---
 
@@ -138,16 +157,27 @@ const upsertAssistanceStmt = db.prepare(`
 `);
 
 const upsertMenuStmt = db.prepare(`
-  INSERT INTO menu (id, name, description, price, category, image, available)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO menu (id, name, description, price, category, image, available, image_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     description = excluded.description,
     price = excluded.price,
     category = excluded.category,
     image = excluded.image,
-    available = excluded.available
+    available = excluded.available,
+    image_id = excluded.image_id
 `);
+
+const upsertCategoryStmt = db.prepare(`
+  INSERT INTO categories (id, name, icon, position) VALUES (?, ?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET name = excluded.name, icon = excluded.icon, position = excluded.position
+`);
+const deleteCategoryStmt = db.prepare('DELETE FROM categories WHERE id = ?');
+const insertImageStmt = db.prepare('INSERT INTO images (id, mime, data, created_at) VALUES (?, ?, ?, ?)');
+const getImageStmt = db.prepare('SELECT mime, data FROM images WHERE id = ?');
+const imageExistsStmt = db.prepare('SELECT 1 FROM images WHERE id = ?');
+const deleteImageStmt = db.prepare('DELETE FROM images WHERE id = ?');
 
 const deleteAssistanceStmt = db.prepare('DELETE FROM assistance_requests WHERE table_id = ?');
 const deleteTableStmt = db.prepare('DELETE FROM tables WHERE id = ?');
@@ -174,6 +204,7 @@ const rowToMenuItem = (row) => ({
   price: row.price,
   category: row.category,
   image: row.image,
+  imageId: row.image_id,
   available: Boolean(row.available)
 });
 
@@ -241,8 +272,40 @@ export const persistMenuItem = (item) => {
     item.price,
     item.category,
     item.image,
-    item.available ? 1 : 0
+    item.available ? 1 : 0,
+    item.imageId || null
   );
+};
+
+export const persistCategory = (category) => {
+  upsertCategoryStmt.run(category.id, category.name, category.icon || '', category.position);
+};
+
+export const deleteCategory = (id) => {
+  deleteCategoryStmt.run(id);
+};
+
+// --- IMÁGENES ---
+
+export const saveImage = ({ id, mime, data }) => {
+  insertImageStmt.run(id, mime, data, new Date().toISOString());
+};
+
+export const getImage = (id) => getImageStmt.get(id);
+
+export const imageExists = (id) => Boolean(imageExistsStmt.get(id));
+
+export const deleteImage = (id) => {
+  deleteImageStmt.run(id);
+};
+
+// Borra las imágenes que no están en keepIds: fotos que se subieron y nunca se asignaron
+// (un formulario que se canceló después de elegir la foto).
+export const deleteUnusedImages = (keepIds) => {
+  const keep = new Set(keepIds);
+  const unused = db.prepare('SELECT id FROM images').all().map(row => row.id).filter(id => !keep.has(id));
+  runInTransaction(() => unused.forEach(id => deleteImageStmt.run(id)));
+  return unused.length;
 };
 
 export const deleteMenuItem = (id) => {
@@ -253,7 +316,7 @@ export const deleteMenuItem = (id) => {
 // la siembra con las mesas iniciales. Los pedidos ya archivados (mesa cobrada o
 // pedido cancelado) quedan en la base como historial pero no se cargan: ningún
 // flujo los lee después de archivar, y así la memoria no crece sin límite.
-export const loadState = (initialTables, defaultMenu) => {
+export const loadState = (initialTables, defaultMenu, defaultCategories) => {
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM tables').get();
   if (n === 0) {
     runInTransaction(() => initialTables.forEach(persistTable));
@@ -266,11 +329,20 @@ export const loadState = (initialTables, defaultMenu) => {
     runInTransaction(() => defaultMenu.forEach(persistMenuItem));
   }
 
+  // Las categorías también se siembran aparte: una base anterior a la tabla categories
+  // tiene productos en las cuatro categorías fijas de antes, que son justo la semilla.
+  const { c } = db.prepare('SELECT COUNT(*) AS c FROM categories').get();
+  if (c === 0) {
+    runInTransaction(() => defaultCategories.forEach(persistCategory));
+  }
+
   return {
     tables: db.prepare('SELECT * FROM tables ORDER BY CAST(id AS INTEGER)').all().map(rowToTable),
     // rowid preserva el orden de inserción, igual que el array en memoria.
     orders: db.prepare('SELECT * FROM orders WHERE archived = 0 ORDER BY rowid').all().map(rowToOrder),
     menu: db.prepare('SELECT * FROM menu ORDER BY rowid').all().map(rowToMenuItem),
+    categories: db.prepare('SELECT * FROM categories ORDER BY position, rowid').all()
+      .map(({ id, name, icon, position }) => ({ id, name, icon, position })),
     assistanceRequests: new Map(
       db.prepare('SELECT * FROM assistance_requests').all().map(row => [
         row.table_id,
@@ -355,10 +427,11 @@ export const setOrderWritesFailing = (failing) => {
 // Solo para /api/test/reset y el reset de la demo pública: vuelve la base al estado de
 // primer arranque. Borra también el historial de pedidos archivados — aceptable porque
 // en un despliegue real (producción sin DEMO_MODE) no se llama nunca.
-export const resetState = (initialTables, defaultMenu) => {
+export const resetState = (initialTables, defaultMenu, defaultCategories) => {
   runInTransaction(() => {
-    db.exec('DELETE FROM orders; DELETE FROM assistance_requests; DELETE FROM register_closures; DELETE FROM tables; DELETE FROM menu; DELETE FROM settings;');
+    db.exec('DELETE FROM orders; DELETE FROM assistance_requests; DELETE FROM register_closures; DELETE FROM tables; DELETE FROM menu; DELETE FROM settings; DELETE FROM categories; DELETE FROM images;');
     initialTables.forEach(persistTable);
     defaultMenu.forEach(persistMenuItem);
+    defaultCategories.forEach(persistCategory);
   });
 };

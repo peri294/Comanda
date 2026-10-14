@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Settings, X } from 'lucide-react';
+import { Settings, X, ImagePlus } from 'lucide-react';
+import { uploadImage, IMAGE_PRESETS } from '../utils/images';
 
 // Mismo tope que el server (MAX_BUSINESS_NAME_LENGTH en domain.js).
 const MAX_BUSINESS_NAME_LENGTH = 60;
@@ -11,8 +12,10 @@ const inputStyle = {
 
 // Configuración del local desde el Mostrador. El cambio no se aplica acá: el server lo
 // guarda y lo difunde con settings-updated a todas las pantallas (esta incluida).
-export default function SettingsModal({ socket, businessName, onClose }) {
+export default function SettingsModal({ socket, token, businessName, logoUrl, onClose }) {
   const [name, setName] = useState(businessName);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
   const trimmed = name.trim();
   const unchanged = trimmed === businessName;
 
@@ -20,6 +23,22 @@ export default function SettingsModal({ socket, businessName, onClose }) {
     e.preventDefault();
     if (!trimmed || unchanged) return;
     socket.emit('update-settings', { businessName: trimmed });
+  };
+
+  const chooseLogo = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setError('');
+    setUploading(true);
+    try {
+      const id = await uploadImage(file, token, IMAGE_PRESETS.logo);
+      socket.emit('update-settings', { logoImageId: id });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -52,6 +71,27 @@ export default function SettingsModal({ socket, businessName, onClose }) {
             {unchanged ? 'Guardado' : 'Guardar Nombre'}
           </button>
         </form>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '24px' }}>
+          <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--accent-gold)' }}>Logo</span>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+            Reemplaza al ícono de la taza en el encabezado. Mejor una imagen cuadrada o apaisada con fondo transparente.
+          </p>
+          {error && <p role="alert" style={{ color: 'var(--danger)', fontSize: '0.85rem', margin: 0 }}>{error}</p>}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            {logoUrl && <img src={logoUrl} alt="Logo actual" style={{ height: '48px', maxWidth: '120px', objectFit: 'contain' }} />}
+            <label className="btn-secondary" style={{ padding: '8px 12px', fontSize: '0.8rem', cursor: 'pointer' }}>
+              <ImagePlus size={14} /> {uploading ? 'Subiendo…' : logoUrl ? 'Cambiar logo' : 'Subir logo'}
+              <input type="file" accept="image/*" onChange={chooseLogo} disabled={uploading} hidden data-testid="logo-input" />
+            </label>
+            {logoUrl && (
+              <button type="button" className="btn-secondary" style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                onClick={() => socket.emit('update-settings', { logoImageId: null })}>
+                Quitar logo
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

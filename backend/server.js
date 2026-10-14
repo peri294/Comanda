@@ -21,7 +21,14 @@ import {
   closeRegister,
   setOrderWritesFailing,
   getSettings,
-  saveSettings
+  saveSettings,
+  persistCategory,
+  deleteCategory,
+  saveImage,
+  getImage,
+  imageExists,
+  deleteImage,
+  deleteUnusedImages
 } from './db.js';
 import {
   newQrToken,
@@ -42,7 +49,14 @@ import {
   requestBill,
   assistanceDecision,
   closeOrders,
-  sanitizeSettings
+  sanitizeSettings,
+  newCategoryId,
+  sanitizeCategoryFields,
+  canDeleteCategory,
+  reorderCategories,
+  newImageId,
+  isImageId,
+  decodeImageUpload
 } from './domain.js';
 import { passwordMatches, createSessionStore, createLoginThrottle } from './auth.js';
 
@@ -60,12 +74,14 @@ const APP_MODE = DEMO_MODE ? 'demo' : DEV_MODE ? 'dev' : 'production';
 
 // Ajustes del local hasta que el Mostrador los cambie (ver la tabla settings).
 const DEFAULT_SETTINGS = {
-  business_name: DEMO_MODE || DEV_MODE ? 'Café Premium' : 'Mi Cafetería'
+  business_name: DEMO_MODE || DEV_MODE ? 'Café Premium' : 'Mi Cafetería',
+  logo_image_id: ''
 };
+const imageUrl = (id) => (id ? `/api/images/${id}` : null);
 // Forma en que los ajustes viajan al frontend (camelCase, sin las claves de la base).
 const publicSettings = () => {
   const settings = getSettings(DEFAULT_SETTINGS);
-  return { businessName: settings.business_name };
+  return { businessName: settings.business_name, logoUrl: imageUrl(settings.logo_image_id) };
 };
 
 // --- AUTENTICACION DE PERSONAL ---
@@ -114,6 +130,11 @@ const requireStaffAuth = (req, res, next) => {
   req.staffRole = role;
   next();
 };
+
+// Como requireStaffAuth, pero solo para un rol: la sesión de cocina no puede subir fotos
+// ni ver reportes.
+const requireRole = (role) => (req, res, next) =>
+  requireStaffAuth(req, res, () => (req.staffRole === role ? next() : res.status(403).json({ error: 'Sin permiso' })));
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, CORS_ORIGIN ? {
@@ -239,10 +260,19 @@ const DEFAULT_MENU = [
   }
 ].map(item => ({ ...item, available: true }));
 
+// Categorías de fábrica: las cuatro que el menú tuvo fijas hasta que pasaron a la base,
+// con los mismos ids que usan los productos de DEFAULT_MENU.
+const DEFAULT_CATEGORIES = [
+  { id: 'bebidas_calientes', name: 'Café Caliente', icon: '☕' },
+  { id: 'bebidas_frias', name: 'Fríos y Licuados', icon: '🍹' },
+  { id: 'pasteleria', name: 'Pastelería', icon: '🍰' },
+  { id: 'salado', name: 'Salado', icon: '🥪' }
+].map((category, position) => ({ ...category, position }));
+
 // Las lecturas y la lógica de negocio operan sobre estas estructuras en memoria;
 // cada mutación se refleja en SQLite (write-through, ver db.js), así un restart
 // del server ya no borra las mesas, pedidos ni cambios del menú.
-const persistedState = loadState(initialTables(), DEFAULT_MENU);
+const persistedState = loadState(initialTables(), DEFAULT_MENU, DEFAULT_CATEGORIES);
 let tables = persistedState.tables;
 // Mesas de una base anterior a los tokens de QR: se les genera uno al arrancar.
 tables.filter(t => !t.qrToken).forEach(t => {
@@ -251,6 +281,9 @@ tables.filter(t => !t.qrToken).forEach(t => {
 });
 let orders = persistedState.orders;
 let menuCache = persistedState.menu;
+let categoriesCache = persistedState.categories;
+// Fotos subidas que nunca se asignaron a un producto ni al logo.
+deleteUnusedImages([...menuCache.map(m => m.imageId), getSettings(DEFAULT_SETTINGS).logo_image_id].filter(Boolean));
 
 // Solicitudes de "Llamar al Mozo" activas, indexadas por mesa: { timestamp, resolved, resolvedAt }
 // (las reglas de duplicados y cooldown están en assistanceDecision, ver domain.js).
@@ -262,10 +295,11 @@ let activeAssistanceRequests = persistedState.assistanceRequests;
 // confirmado, se rehace la memoria desde ahí. Los avisos a las pantallas salen después
 // de persistir, así que ninguna llegó a ver el estado descartado.
 const reloadFromDb = () => {
-  const state = loadState(initialTables(), DEFAULT_MENU);
+  const state = loadState(initialTables(), DEFAULT_MENU, DEFAULT_CATEGORIES);
   tables = state.tables;
   orders = state.orders;
   menuCache = state.menu;
+  categoriesCache = state.categories;
   activeAssistanceRequests = state.assistanceRequests;
 };
 
@@ -274,6 +308,15 @@ const reloadFromDb = () => {
 // arrancar: si no, el array crecía con cada pedido del día.
 const pruneArchivedOrders = () => {
   orders = orders.filter(o => !o.archived);
+};
+
+// Borra una imagen que dejó de usarse (foto reemplazada, producto borrado, logo
+// cambiado), salvo que otro producto o el logo todavía la usen.
+const releaseImage = (id) => {
+  if (!id) return;
+  if (menuCache.some(m => m.imageId === id)) return;
+  if (getSettings(DEFAULT_SETTINGS).logo_image_id === id) return;
+  deleteImage(id);
 };
 
 // --- HELPERS ---
@@ -377,6 +420,31 @@ app.get('/api/menu', (req, res) => {
   res.json(menuCache);
 });
 
+// Categorías del menú, en el orden en que se muestran.
+app.get('/api/categories', (req, res) => {
+  res.json(categoriesCache);
+});
+
+// Subida de una foto de producto o del logo (solo el mostrador). Llega como JSON con la
+// imagen en base64, ya achicada por el navegador (ver resizeImage.js en el frontend);
+// el límite propio de 400 KB cubre los 300 KB de imagen más el inflado del base64.
+// Devuelve el id, que después se asigna con menu-add/menu-update o update-settings.
+app.post('/api/images', requireRole('counter'), express.json({ limit: '400kb' }), (req, res) => {
+  const image = decodeImageUpload(req.body);
+  if (image.error) return res.status(400).json({ error: image.error });
+  const id = newImageId();
+  saveImage({ id, ...image });
+  res.status(201).json({ id, url: imageUrl(id) });
+});
+
+// Las imágenes no cambian nunca (una foto nueva es un id nuevo): se cachean para siempre.
+app.get('/api/images/:id', (req, res) => {
+  const image = isImageId(req.params.id) && getImage(req.params.id);
+  if (!image) return res.status(404).end();
+  res.set({ 'Content-Type': image.mime, 'Cache-Control': 'public, max-age=31536000, immutable' });
+  res.send(Buffer.from(image.data));
+});
+
 // Login de personal (cocina/mostrador). Devuelve un token de sesión que el frontend
 // guarda en localStorage para no pedir contraseña en cada carga.
 app.post('/api/auth/login', (req, res) => {
@@ -448,8 +516,9 @@ const resetToSeed = ({ keepQrTokens = false, enableTables = false } = {}) => {
   });
   orders = [];
   menuCache = JSON.parse(JSON.stringify(DEFAULT_MENU));
+  categoriesCache = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
   activeAssistanceRequests.clear();
-  resetState(tables, DEFAULT_MENU);
+  resetState(tables, DEFAULT_MENU, DEFAULT_CATEGORIES);
 };
 
 // Solo para los tests E2E. Existe únicamente con DEV_MODE=1: borra la base sin pedir
@@ -892,14 +961,23 @@ io.on('connection', (socket) => {
   // se persiste en SQLite y se emite menu-updated a TODOS los conectados (los clientes
   // en las mesas actualizan catálogo y carrito en vivo, sin recargar).
 
+  // Foto de un producto en un menu-add/menu-update: el id de una imagen ya subida, null
+  // para sacarla, o lo que tenía si el formulario no la tocó.
+  const imageIdFrom = (data, current = null) => {
+    if (data.imageId === null) return null;
+    if (isImageId(data.imageId) && imageExists(data.imageId)) return data.imageId;
+    return current;
+  };
+
   // Evento: Agregar un producto al menú
-  staffOn('counter', 'menu-add', (data = {}) => {
-    const fields = sanitizeMenuFields(data);
+  staffOn('counter', 'menu-add', (data) => {
+    const fields = sanitizeMenuFields(data, categoriesCache);
     if (!fields) return;
 
     const newItem = {
       id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       ...fields,
+      imageId: imageIdFrom(data),
       available: true
     };
     menuCache.push(newItem);
@@ -909,29 +987,72 @@ io.on('connection', (socket) => {
 
   // Evento: Editar un producto (datos y/o disponibilidad). El switch rápido de
   // "agotado" del mostrador usa este mismo evento con available invertido.
-  staffOn('counter', 'menu-update', (data = {}) => {
+  staffOn('counter', 'menu-update', (data) => {
     const item = menuCache.find(m => m.id === data.id);
     if (!item) return;
-    const fields = sanitizeMenuFields(data);
+    const fields = sanitizeMenuFields(data, categoriesCache);
     if (!fields) return;
 
     // Si el payload no trae available (edición de datos solamente), se conserva el
     // actual: que un formulario incompleto no "agote" un producto por accidente.
     const available = data.available === undefined ? item.available : Boolean(data.available);
-    Object.assign(item, fields, { available });
+    const previousImageId = item.imageId;
+    Object.assign(item, fields, { available, imageId: imageIdFrom(data, item.imageId) });
     persistMenuItem(item);
+    if (previousImageId !== item.imageId) releaseImage(previousImageId);
     io.emit('menu-updated', menuCache);
   });
 
   // Evento: Eliminar un producto del menú. No rompe nada retroactivamente: los
   // pedidos (activos y archivados) guardan snapshot de nombre/precio, y edit-order
   // conserva los items ya pedidos aunque el producto ya no exista (sanitizeItems).
-  staffOn('counter', 'menu-delete', ({ id } = {}) => {
-    if (!menuCache.some(m => m.id === id)) return;
+  staffOn('counter', 'menu-delete', ({ id }) => {
+    const item = menuCache.find(m => m.id === id);
+    if (!item) return;
 
     menuCache = menuCache.filter(m => m.id !== id);
     deleteMenuItem(id);
+    releaseImage(item.imageId);
     io.emit('menu-updated', menuCache);
+  });
+
+  // --- CATEGORÍAS DEL MENÚ (desde Mostrador) ---
+  // Mismo esquema que el CRUD de productos: persistir y difundir a todos los conectados
+  // (los filtros del menú del cliente cambian en vivo).
+  const broadcastCategories = () => io.emit('categories-updated', categoriesCache);
+
+  staffOn('counter', 'category-add', (data) => {
+    const fields = sanitizeCategoryFields(data);
+    if (!fields) return;
+    const category = { id: newCategoryId(), ...fields, position: categoriesCache.length };
+    categoriesCache.push(category);
+    persistCategory(category);
+    broadcastCategories();
+  });
+
+  staffOn('counter', 'category-update', (data) => {
+    const category = categoriesCache.find(c => c.id === data.id);
+    const fields = sanitizeCategoryFields(data);
+    if (!category || !fields) return;
+    Object.assign(category, fields);
+    persistCategory(category);
+    broadcastCategories();
+  });
+
+  // Una categoría con productos no se borra (ver canDeleteCategory).
+  staffOn('counter', 'category-delete', ({ id }) => {
+    if (!categoriesCache.some(c => c.id === id) || !canDeleteCategory(id, menuCache)) return;
+    categoriesCache = categoriesCache.filter(c => c.id !== id);
+    deleteCategory(id);
+    broadcastCategories();
+  });
+
+  staffOn('counter', 'category-reorder', ({ ids }) => {
+    const reordered = reorderCategories(ids, categoriesCache);
+    if (!reordered) return;
+    categoriesCache = reordered;
+    runInTransaction(() => reordered.forEach(persistCategory));
+    broadcastCategories();
   });
 
   // Evento: Cambiar la configuración del local (desde Mostrador). Todas las pantallas,
@@ -939,7 +1060,12 @@ io.on('connection', (socket) => {
   staffOn('counter', 'update-settings', (data) => {
     const settings = sanitizeSettings(data);
     if (!settings) return;
+    // El logo tiene que ser una imagen que exista (subida antes por /api/images).
+    if (settings.logo_image_id && !imageExists(settings.logo_image_id)) delete settings.logo_image_id;
+    if (Object.keys(settings).length === 0) return;
+    const previousLogo = getSettings(DEFAULT_SETTINGS).logo_image_id;
     saveSettings(settings);
+    if ('logo_image_id' in settings && settings.logo_image_id !== previousLogo) releaseImage(previousLogo);
     io.emit('settings-updated', publicSettings());
   });
 

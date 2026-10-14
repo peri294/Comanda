@@ -9,9 +9,10 @@
 // se emite, y copiarla obligaría a reemplazarla en el array de mesas en cada evento.
 import crypto from 'node:crypto';
 
-// Categorías válidas en v1: los filtros del cliente están atados a estas cuatro,
-// un producto con una categoría inventada no tendría pestaña donde aparecer.
-export const MENU_CATEGORIES = ['bebidas_calientes', 'bebidas_frias', 'pasteleria', 'salado'];
+// Topes de las categorías del menú, que el Mostrador administra (ver la tabla categories).
+export const MAX_CATEGORY_NAME_LENGTH = 40;
+// Un emoji puede ocupar varias unidades UTF-16 (banderas, modificadores de tono).
+export const MAX_CATEGORY_ICON_LENGTH = 8;
 
 // Recorrido de un pedido en cocina, en orden. 'cancelado' no está: lo pone solo el Mostrador.
 export const KITCHEN_FLOW = ['pendiente', 'en_preparacion', 'listo', 'entregado'];
@@ -252,10 +253,12 @@ export const assistanceDecision = (existing, now) => {
 // Valida y normaliza los campos de un producto del menú que manda el mostrador.
 // Devuelve null si algo es inválido (nombre vacío, precio no positivo, categoría
 // desconocida): la validación visual del formulario no exime a la del server.
-export const sanitizeMenuFields = ({ name, description, price, category, image } = {}) => {
+// La categoría tiene que existir: un producto con una categoría inventada no tendría
+// pestaña donde aparecer en el menú del cliente.
+export const sanitizeMenuFields = ({ name, description, price, category, image } = {}, categories = []) => {
   const cleanName = typeof name === 'string' ? name.trim() : '';
   const numPrice = Number(price);
-  if (!cleanName || !Number.isFinite(numPrice) || numPrice <= 0 || !MENU_CATEGORIES.includes(category)) {
+  if (!cleanName || !Number.isFinite(numPrice) || numPrice <= 0 || !categories.some(c => c.id === category)) {
     return null;
   }
   return {
@@ -275,11 +278,71 @@ export const MAX_BUSINESS_NAME_LENGTH = 60;
 
 // Ajustes que el Mostrador puede cambiar. Devuelve solo los campos válidos que vinieron
 // (un formulario puede mandar uno solo), o null si no quedó ninguno.
-export const sanitizeSettings = ({ businessName } = {}) => {
+// El logo es el id de una imagen ya subida (que server.js verifica que exista), o null
+// para sacarlo.
+export const sanitizeSettings = ({ businessName, logoImageId } = {}) => {
   const clean = {};
   if (typeof businessName === 'string') {
     const name = businessName.trim().slice(0, MAX_BUSINESS_NAME_LENGTH);
     if (name) clean.business_name = name;
   }
+  if (logoImageId === null) clean.logo_image_id = '';
+  else if (isImageId(logoImageId)) clean.logo_image_id = logoImageId;
   return Object.keys(clean).length > 0 ? clean : null;
+};
+
+// --- IMÁGENES ---
+
+// Formatos que se aceptan para fotos y logo, con la firma de sus primeros bytes: el mime
+// que declara el navegador no alcanza, se verifica el contenido.
+const IMAGE_SIGNATURES = {
+  'image/jpeg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/png': (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/webp': (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP'
+};
+// El frontend achica las fotos a 800 px antes de subirlas; esto es el techo del server.
+export const MAX_IMAGE_BYTES = 300 * 1024;
+
+export const newImageId = () => `img-${crypto.randomUUID()}`;
+export const isImageId = (id) => typeof id === 'string' && /^img-[0-9a-f-]{36}$/.test(id);
+
+// Imagen subida como { mime, data (base64) }. Devuelve { mime, data: Buffer } o el motivo
+// del rechazo.
+export const decodeImageUpload = ({ mime, data } = {}) => {
+  if (!Object.hasOwn(IMAGE_SIGNATURES, mime)) return { error: 'unsupported_type' };
+  if (typeof data !== 'string' || data.length === 0) return { error: 'invalid_image' };
+  const buffer = Buffer.from(data, 'base64');
+  if (buffer.length > MAX_IMAGE_BYTES) return { error: 'too_large' };
+  if (buffer.length < 12 || !IMAGE_SIGNATURES[mime](buffer)) return { error: 'invalid_image' };
+  return { mime, data: buffer };
+};
+
+// --- CATEGORÍAS DEL MENÚ ---
+
+export const newCategoryId = () => `cat-${crypto.randomBytes(6).toString('base64url')}`;
+
+// Nombre e icono (emoji) de una categoría. El icono es opcional: el cliente lo muestra en
+// los productos sin foto.
+export const sanitizeCategoryFields = ({ name, icon } = {}) => {
+  const cleanName = typeof name === 'string' ? name.trim().slice(0, MAX_CATEGORY_NAME_LENGTH) : '';
+  if (!cleanName) return null;
+  const cleanIcon = typeof icon === 'string' ? icon.trim().slice(0, MAX_CATEGORY_ICON_LENGTH) : '';
+  return { name: cleanName, icon: cleanIcon };
+};
+
+// Una categoría con productos no se borra: quedarían productos sin pestaña en el menú.
+// Primero se mueven o se borran sus productos.
+export const canDeleteCategory = (categoryId, menu) => !menu.some(item => item.category === categoryId);
+
+// Nuevo orden de las categorías: tiene que ser una permutación exacta de las actuales
+// (ni ids de más, ni de menos, ni repetidos). Devuelve las categorías con su position
+// nueva, o null si el orden no es válido.
+export const reorderCategories = (orderedIds, categories) => {
+  if (!Array.isArray(orderedIds) || orderedIds.length !== categories.length) return null;
+  if (new Set(orderedIds).size !== orderedIds.length) return null;
+  const reordered = orderedIds.map((id, position) => {
+    const category = categories.find(c => c.id === id);
+    return category && { ...category, position };
+  });
+  return reordered.every(Boolean) ? reordered : null;
 };

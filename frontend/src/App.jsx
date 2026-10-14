@@ -7,7 +7,7 @@ import CounterView from './components/CounterView';
 import StaffLogin from './components/StaffLogin';
 import { createAudioContext, playTone } from './utils/sound';
 import { useStaffAuth } from './hooks/useStaffAuth';
-import { BACKEND_URL, tableClientUrl } from './config';
+import { BACKEND_URL, tableClientUrl, absoluteBackendUrl } from './config';
 
 export default function App() {
   const [view, setView] = useState('portal'); // 'portal', 'client', 'kitchen', 'counter'
@@ -135,6 +135,7 @@ export default function App() {
   }, []);
 
   const businessName = appConfig?.businessName || '';
+  const logoUrl = absoluteBackendUrl(appConfig?.logoUrl);
   useEffect(() => {
     if (businessName) document.title = businessName;
   }, [businessName]);
@@ -166,7 +167,9 @@ export default function App() {
           onClick={canLeaveView ? () => navigateTo('portal') : undefined}
           style={{ cursor: canLeaveView ? 'pointer' : 'default' }}
         >
-          <Coffee style={{ color: 'var(--accent-gold)' }} />
+          {logoUrl
+            ? <img className="logo-img" src={logoUrl} alt="" />
+            : <Coffee style={{ color: 'var(--accent-gold)' }} />}
           <span className="logo-name">{businessName}</span>
         </div>
 
@@ -228,7 +231,7 @@ export default function App() {
         {/* VIEW 3: Counter/Manager Dashboard (detrás de login de personal) */}
         {view === 'counter' && (
           counterAuth.token ? (
-            <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} businessName={businessName} />
+            <CounterView socket={socket} token={counterAuth.token} onLogout={counterAuth.logout} businessName={businessName} logoUrl={logoUrl} />
           ) : (
             <StaffLogin role="counter" onLogin={counterAuth.login} error={counterAuth.error} loading={counterAuth.loading} demoPassword={demoCredentials?.counter} />
           )

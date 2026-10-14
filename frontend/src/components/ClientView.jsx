@@ -7,16 +7,8 @@ import {
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
 import { formatPrice } from '../utils/format';
-import { MENU_CATEGORIES } from '../menuCategories';
-
-const categories = [{ id: 'todos', label: 'Todo' }, ...MENU_CATEGORIES];
-
-const categoryEmojis = {
-  bebidas_calientes: '☕',
-  bebidas_frias: '🍹',
-  pasteleria: '🍰',
-  salado: '🥪'
-};
+import { imageUrl } from '../config';
+import { useCategories } from '../hooks/useCategories';
 
 // Motivos con los que el server rechaza un new-order (ver el acknowledgement en server.js).
 const ORDER_ERRORS = {
@@ -45,6 +37,7 @@ function Notice({ icon: Icon, iconColor, title, children }) {
 export default function ClientView({ tableId, qrToken, socket }) {
   const [menu, setMenu] = useState([]);
   const [activeCategory, setActiveCategory] = useState('todos');
+  const categories = useCategories(socket);
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [notes, setNotes] = useState('');
@@ -288,7 +281,12 @@ export default function ClientView({ tableId, qrToken, socket }) {
     if (socket?.connected) socket.emit('request-bill', { paymentMethod });
   };
 
-  const filteredMenu = activeCategory === 'todos' ? menu : menu.filter(item => item.category === activeCategory);
+  // Solo las categorías con algún producto: una pestaña vacía no le sirve al cliente. Si
+  // la categoría elegida desaparece (el mostrador la vació o la borró), se vuelve a "Todo".
+  const visibleCategories = categories.filter(c => menu.some(item => item.category === c.id));
+  const currentCategory = visibleCategories.some(c => c.id === activeCategory) ? activeCategory : 'todos';
+  const filteredMenu = currentCategory === 'todos' ? menu : menu.filter(item => item.category === currentCategory);
+  const categoryOf = (item) => categories.find(c => c.id === item.category);
 
   if (loading) {
     return (
@@ -492,13 +490,13 @@ export default function ClientView({ tableId, qrToken, socket }) {
 
       {/* Categories Filter Bar */}
       <div className="filter-bar">
-        {categories.map(cat => (
+        {[{ id: 'todos', name: 'Todo' }, ...visibleCategories].map(cat => (
           <button
             key={cat.id}
-            className={`filter-btn ${activeCategory === cat.id ? 'active' : ''}`}
+            className={`filter-btn ${currentCategory === cat.id ? 'active' : ''}`}
             onClick={() => setActiveCategory(cat.id)}
           >
-            {cat.label}
+            {cat.name}
           </button>
         ))}
       </div>
@@ -508,13 +506,17 @@ export default function ClientView({ tableId, qrToken, socket }) {
         {filteredMenu.map(item => (
           <div key={item.id} className="glass-panel menu-card" style={item.available === false ? { opacity: 0.55 } : undefined}>
             <div className="menu-card-img-container">
-              <div className="menu-card-img-placeholder">
-                {categoryEmojis[item.category] || '☕'}
-              </div>
+              {item.imageId ? (
+                <img className="menu-card-img" src={imageUrl(item.imageId)} alt={item.name} loading="lazy" />
+              ) : (
+                <div className="menu-card-img-placeholder">
+                  {categoryOf(item)?.icon || '☕'}
+                </div>
+              )}
             </div>
             <div className="menu-card-content">
               <span className="menu-card-category">
-                {item.category.replace('_', ' ')}
+                {categoryOf(item)?.name}
               </span>
               <h4 className="menu-card-title">{item.name}</h4>
               <p className="menu-card-description">{item.description}</p>

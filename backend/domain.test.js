@@ -11,10 +11,17 @@ import {
   closedTable,
   closeOrders,
   sanitizeSettings,
+  decodeImageUpload,
+  newImageId,
+  MAX_IMAGE_BYTES,
   MAX_BUSINESS_NAME_LENGTH,
   sanitizeItems,
   sanitizeNotes,
   sanitizeMenuFields,
+  sanitizeCategoryFields,
+  canDeleteCategory,
+  reorderCategories,
+  MAX_CATEGORY_NAME_LENGTH,
   registerNewOrder,
   canAdvanceKitchenStatus,
   canCorrectOrder,
@@ -84,19 +91,55 @@ describe('sanitizeNotes', () => {
 });
 
 describe('sanitizeMenuFields', () => {
+  const categories = [{ id: 'bebidas_calientes', name: 'Café Caliente' }, { id: 'cat-tortas', name: 'Tortas' }];
+
   test('normaliza un producto válido con icono por defecto', () => {
-    assert.deepEqual(sanitizeMenuFields({ name: ' Latte ', price: '2500', category: 'bebidas_calientes' }), {
+    assert.deepEqual(sanitizeMenuFields({ name: ' Latte ', price: '2500', category: 'bebidas_calientes' }, categories), {
       name: 'Latte', description: '', price: 2500, category: 'bebidas_calientes', image: 'coffee'
     });
   });
 
-  test('rechaza nombre vacío, precio no positivo o categoría desconocida', () => {
+  test('acepta una categoría creada por el mostrador', () => {
+    assert.equal(sanitizeMenuFields({ name: 'Lemon Pie', price: 3000, category: 'cat-tortas' }, categories).category, 'cat-tortas');
+  });
+
+  test('rechaza nombre vacío, precio no positivo o categoría que no existe', () => {
     const ok = { name: 'Latte', price: 2500, category: 'bebidas_calientes' };
-    assert.equal(sanitizeMenuFields({ ...ok, name: '   ' }), null);
-    assert.equal(sanitizeMenuFields({ ...ok, price: 0 }), null);
-    assert.equal(sanitizeMenuFields({ ...ok, price: 'abc' }), null);
-    assert.equal(sanitizeMenuFields({ ...ok, category: 'bebidas_alcoholicas' }), null);
+    assert.equal(sanitizeMenuFields({ ...ok, name: '   ' }, categories), null);
+    assert.equal(sanitizeMenuFields({ ...ok, price: 0 }, categories), null);
+    assert.equal(sanitizeMenuFields({ ...ok, price: 'abc' }, categories), null);
+    assert.equal(sanitizeMenuFields({ ...ok, category: 'bebidas_alcoholicas' }, categories), null);
+    assert.equal(sanitizeMenuFields(ok), null);
     assert.equal(sanitizeMenuFields(), null);
+  });
+});
+
+describe('categorías', () => {
+  const categories = [
+    { id: 'a', name: 'A', icon: '', position: 0 },
+    { id: 'b', name: 'B', icon: '', position: 1 }
+  ];
+
+  test('sanitizeCategoryFields recorta nombre e icono y exige nombre', () => {
+    assert.deepEqual(sanitizeCategoryFields({ name: '  Tortas ', icon: ' 🍰 ' }), { name: 'Tortas', icon: '🍰' });
+    assert.deepEqual(sanitizeCategoryFields({ name: 'Tortas' }), { name: 'Tortas', icon: '' });
+    assert.equal(sanitizeCategoryFields({ name: 'x'.repeat(100) }).name.length, MAX_CATEGORY_NAME_LENGTH);
+    assert.equal(sanitizeCategoryFields({ name: '  ' }), null);
+    assert.equal(sanitizeCategoryFields(), null);
+  });
+
+  test('una categoría con productos no se puede borrar', () => {
+    const menu = [{ id: 'm1', category: 'a' }];
+    assert.equal(canDeleteCategory('a', menu), false);
+    assert.equal(canDeleteCategory('b', menu), true);
+  });
+
+  test('reorderCategories exige una permutación exacta', () => {
+    assert.deepEqual(reorderCategories(['b', 'a'], categories).map(c => [c.id, c.position]), [['b', 0], ['a', 1]]);
+    assert.equal(reorderCategories(['a'], categories), null);
+    assert.equal(reorderCategories(['a', 'a'], categories), null);
+    assert.equal(reorderCategories(['a', 'z'], categories), null);
+    assert.equal(reorderCategories('a,b', categories), null);
   });
 });
 
@@ -274,10 +317,38 @@ describe('sanitizeSettings', () => {
     assert.equal(business_name.length, MAX_BUSINESS_NAME_LENGTH);
   });
 
+  test('el logo es un id de imagen, o null para sacarlo', () => {
+    const id = newImageId();
+    assert.deepEqual(sanitizeSettings({ logoImageId: id }), { logo_image_id: id });
+    assert.deepEqual(sanitizeSettings({ logoImageId: null }), { logo_image_id: '' });
+    assert.equal(sanitizeSettings({ logoImageId: '../etc/passwd' }), null);
+  });
+
   test('sin campos válidos devuelve null', () => {
     assert.equal(sanitizeSettings({ businessName: '   ' }), null);
     assert.equal(sanitizeSettings({ businessName: 42 }), null);
     assert.equal(sanitizeSettings({}), null);
     assert.equal(sanitizeSettings(), null);
+  });
+});
+
+describe('decodeImageUpload', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]);
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
+
+  test('acepta una imagen cuyo contenido coincide con el tipo declarado', () => {
+    const decoded = decodeImageUpload({ mime: 'image/png', data: png.toString('base64') });
+    assert.equal(decoded.mime, 'image/png');
+    assert.ok(decoded.data.equals(png));
+    assert.equal(decodeImageUpload({ mime: 'image/jpeg', data: jpeg.toString('base64') }).mime, 'image/jpeg');
+  });
+
+  test('rechaza tipos no admitidos, contenido que no coincide y archivos grandes', () => {
+    assert.deepEqual(decodeImageUpload({ mime: 'image/svg+xml', data: png.toString('base64') }), { error: 'unsupported_type' });
+    assert.deepEqual(decodeImageUpload({ mime: 'image/jpeg', data: png.toString('base64') }), { error: 'invalid_image' });
+    assert.deepEqual(decodeImageUpload({ mime: 'image/png', data: '' }), { error: 'invalid_image' });
+    const big = Buffer.concat([png, Buffer.alloc(MAX_IMAGE_BYTES)]).toString('base64');
+    assert.deepEqual(decodeImageUpload({ mime: 'image/png', data: big }), { error: 'too_large' });
+    assert.deepEqual(decodeImageUpload(), { error: 'unsupported_type' });
   });
 });

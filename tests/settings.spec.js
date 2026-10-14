@@ -34,6 +34,26 @@ test('el nombre del local se cambia desde el Mostrador y se ve en vivo en las me
   await new Promise(resolve => setTimeout(resolve, 500));
   expect((await config()).businessName).toBe('Café de Prueba');
 
+  // Logo: una imagen subida por el mostrador reemplaza al ícono del header en las mesas
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    'base64'
+  ).toString('base64');
+  const uploaded = await (await fetch(`${BACKEND}/api/images`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${counter.token}` },
+    body: JSON.stringify({ mime: 'image/png', data: png })
+  })).json();
+  counter.socket.emit('update-settings', { logoImageId: uploaded.id });
+  await expect(clientPage.locator('img.logo-img')).toHaveAttribute('src', new RegExp(uploaded.id), { timeout: 10000 });
+  // Un id inventado no reemplaza el logo; null lo saca y borra la imagen
+  counter.socket.emit('update-settings', { logoImageId: 'img-00000000-0000-0000-0000-000000000000' });
+  await new Promise(resolve => setTimeout(resolve, 500));
+  expect((await config()).logoUrl).toBe(`/api/images/${uploaded.id}`);
+  counter.socket.emit('update-settings', { logoImageId: null });
+  await expect(clientPage.locator('img.logo-img')).toHaveCount(0, { timeout: 10000 });
+  expect((await fetch(`${BACKEND}/api/images/${uploaded.id}`)).status).toBe(404);
+
   // Vuelve al nombre original para no afectar a otros specs
   counter.socket.emit('update-settings', { businessName: initial.businessName });
   await expect.poll(async () => (await config()).businessName).toBe(initial.businessName);

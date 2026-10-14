@@ -14,3 +14,8 @@ export const BACKEND_URL =
 // server no deja unirse a la mesa ni pedir a su nombre.
 export const tableClientUrl = (tableId, qrToken) =>
   `?view=client&table=${encodeURIComponent(tableId)}&t=${encodeURIComponent(qrToken)}`;
+
+// URL de una imagen guardada en el server (foto de producto o logo). Las rutas que da el
+// server son relativas (/api/images/...): en desarrollo el backend está en otro puerto.
+export const imageUrl = (imageId) => (imageId ? `${BACKEND_URL}/api/images/${encodeURIComponent(imageId)}` : null);
+export const absoluteBackendUrl = (path) => (path ? `${BACKEND_URL}${path}` : null);
