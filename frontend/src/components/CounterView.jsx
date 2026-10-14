@@ -7,6 +7,7 @@ import TableQrModal from './TableQrModal';
 import SettingsModal from './SettingsModal';
 import MenuAdminModal from './MenuAdminModal';
 import ReportsModal from './ReportsModal';
+import PrintAllQrsModal from './PrintAllQrsModal';
 import { useCategories } from '../hooks/useCategories';
 import { createAudioContext, playTone } from '../utils/sound';
 
@@ -70,6 +71,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
   const [isMenuAdminOpen, setIsMenuAdminOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isReportsOpen, setIsReportsOpen] = useState(false);
+  const [isPrintQrsOpen, setIsPrintQrsOpen] = useState(false);
   const categories = useCategories(socket);
 
   // Estado inicial, re-pedido también tras cada reconexión del socket: los eventos
@@ -399,6 +401,14 @@ export default function CounterView({ socket, token, onLogout, businessName, log
           <button
             className="btn-secondary"
             style={headerButtonStyle}
+            onClick={() => setIsPrintQrsOpen(true)}
+            title="Imprimir el QR de todas las mesas, una por hoja"
+          >
+            <QrCode size={16} /> Imprimir QR
+          </button>
+          <button
+            className="btn-secondary"
+            style={headerButtonStyle}
             onClick={() => setIsMenuAdminOpen(true)}
             title="Administrar los productos del menú (precios, stock, altas y bajas)"
           >
@@ -650,6 +660,8 @@ export default function CounterView({ socket, token, onLogout, businessName, log
         </div>
 
       </div>
+
+      {isPrintQrsOpen && <PrintAllQrsModal tables={tables} onClose={() => setIsPrintQrsOpen(false)} />}
 
       {isReportsOpen && <ReportsModal token={token} onClose={() => setIsReportsOpen(false)} />}
 

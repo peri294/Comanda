@@ -29,16 +29,18 @@ En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → 
 
 | Vista | Quién la usa | Qué hace |
 | --- | --- | --- |
-| **Cliente** (`?view=client`) | El cliente, desde el QR de su mesa | Ver el menú con stock en vivo, armar el carrito con notas, enviar rondas de pedidos, seguir su estado, pedir la cuenta (efectivo/tarjeta) y llamar al mozo |
+| **Cliente** (`?view=client`) | El cliente, desde el QR de su mesa | Entrar con el código de la visita, ver el menú con fotos y stock en vivo, armar el carrito con notas, enviar rondas de pedidos, seguir su estado, pedir la cuenta (efectivo/tarjeta) y llamar al mozo |
 | **Cocina** (`?view=kitchen`) | La cocina, en una tablet | Tablero de comandas: pendiente → en preparación → listo, con aviso sonoro |
-| **Mostrador** (`?view=counter`) | La caja / encargado | Estado de todas las mesas, cobros, edición y cancelación de pedidos, llamados al mozo, CRUD del menú y stock, alta/baja de mesas, QR imprimible por mesa, inicio y cierre del día, cierre de caja |
+| **Mostrador** (`?view=counter`) | La caja / encargado | Estado de todas las mesas con su código de visita, cobros, edición y cancelación de pedidos, llamados al mozo, menú (categorías, productos, fotos y stock), alta/baja de mesas, QR imprimibles, inicio y cierre del día, cierre de caja, reportes de ventas, nombre y logo del local, copia de seguridad |
 
 ##  Características
 
 - **Tiempo real con salas por rol y por mesa:** cada conexión entra a su sala de Socket.io (cocina, mostrador o una mesa puntual) y solo recibe sus eventos.
 - **Pedidos confirmados por acknowledgement:** el carrito se vacía recién cuando el server confirma el pedido. Si el celular pierde la señal, el pedido se reenvía al reconectar y llega una sola vez.
 - **Persistencia write-through en SQLite:** el estado de trabajo vive en memoria y cada cambio se escribe en disco de forma sincrónica (WAL, prepared statements, migraciones de esquema). Mesas, pedidos y caja sobreviven a un reinicio del server.
-- **Menú administrable:** productos, precios y stock ("Agotado") se editan desde el Mostrador y los clientes ven el cambio sin recargar.
+- **Menú administrable:** categorías propias, productos con foto, precios y stock ("Agotado") se editan desde el Mostrador y los clientes ven el cambio sin recargar. Las fotos se achican en el navegador y se guardan en la misma base.
+- **Reportes de ventas:** total, ticket promedio por mesa, ventas por día, productos más vendidos y cierres de caja de cualquier período, exportables a CSV.
+- **Listo para un local real:** nombre y logo configurables, pantalla de inicio solo para el personal en producción, copia de seguridad descargable y [guía de instalación](docs/INSTALACION.md).
 - **Ciclo del día:** las mesas arrancan bloqueadas; "Iniciar Día" las habilita y "Cerrar Día" las bloquea, respetando las que todavía tienen clientes (se bloquean al cobrarlas).
 - **Audio sintetizado con Web Audio API** para las alertas de cocina y mostrador, sin archivos externos.
 - **UI glassmorphism con modo oscuro**, pensada para celular (cliente) y tablet (cocina/mostrador).
@@ -48,8 +50,10 @@ En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → 
 El sistema está expuesto a cualquiera que tenga el link de una mesa, así que el server no confía en el navegador:
 
 - **Token secreto por mesa en el QR:** sin el token no se entra a la sala de la mesa. Los pedidos, la cuenta y los llamados usan la mesa atada a la conexión, nunca un `tableId` enviado por el cliente. El Mostrador puede regenerar el QR.
+- **Código de visita:** el QR impreso es fijo, así que además hace falta un código de 4 dígitos que da el personal y cambia al cobrar la mesa. Quien se guardó el link no puede ver ni pedir a nombre del grupo siguiente. Los intentos se frenan por IP y por mesa, para no bloquear a todos los clientes que comparten el WiFi del local.
 - **Precios y nombres resueltos en el server:** el cliente manda solo IDs de producto y cantidades. Se validan los payloads, las transiciones de estado de los pedidos y el método de pago.
-- **Login de personal por rol:** contraseñas comparadas en tiempo constante (`crypto.timingSafeEqual`), sesiones revocables ("Salir" o "Cerrar Otras Sesiones" ante una tablet perdida) y bloqueo de 15 minutos tras 5 intentos fallidos desde la misma IP.
+- **Login de personal por rol:** contraseñas comparadas en tiempo constante (`crypto.timingSafeEqual`), sesiones revocables ("Salir" o "Cerrar Otras Sesiones" ante una tablet perdida) y bloqueo de 15 minutos tras 5 intentos fallidos desde la misma IP. Cocina solo recibe sus pedidos: la caja, los reportes, las fotos y la copia de seguridad son del mostrador.
+- **Imágenes validadas por contenido:** el server verifica los primeros bytes de cada formato, no el tipo que declara el navegador.
 - **Seguro por defecto:** sin `DEV_MODE=1` el server no expone endpoints de test, no acepta contraseñas por defecto ni CORS abierto, y no arranca si faltan las contraseñas.
 - **Al cobrar una mesa** el server desconecta sus celulares, para que el próximo grupo no vea los pedidos del anterior.
 
@@ -97,9 +101,12 @@ backend/
   db.js           Esquema SQLite, migraciones y queries
   *.test.js       Unit tests
 frontend/src/
-  components/     ClientView, KitchenView, CounterView, StaffLogin, TableQrModal
-  hooks/          useSocketRoom, useStaffAuth
+  components/     ClientView, KitchenView, CounterView y sus modales (menú, reportes,
+                  configuración, QR), StaffLogin
+  hooks/          useSocketRoom, useStaffAuth, useCategories
+  utils/          Formato de precios, imágenes (achicado y subida), sonidos
 tests/            Specs E2E de Playwright
+docs/             Guía de instalación y capturas
 ```
 
 ##  Correr en local
@@ -114,7 +121,7 @@ cd backend && npm install && npm run dev
 cd frontend && npm install && npm run dev
 ```
 
-1. Abrí `http://localhost:5173/`. El portal tiene links a la cocina, al mostrador y a cada mesa.
+1. Abrí `http://localhost:5173/`. El portal tiene links a la cocina, al mostrador y a cada mesa (ya con el código de la visita).
 2. **Login de personal** (contraseñas de desarrollo): `cocina123` para cocina y `mostrador123` para mostrador.
 3. En el Mostrador, tocá **"Iniciar Día"** para habilitar las mesas.
 4. **Desde un celular en la misma red:** abrí la dirección "Network" que muestra Vite, con el link de la mesa (sale del botón de QR en el Mostrador). El frontend deduce solo la dirección del backend; si vive en otro host, usá `VITE_BACKEND_URL`. La primera vez, Windows puede pedir permiso de firewall para Node.
@@ -122,11 +129,11 @@ cd frontend && npm install && npm run dev
 ##  Tests
 
 ```bash
-npm run test:unit        # 32 unit tests del dominio y las sesiones (node:test)
-npx playwright test      # 24 tests E2E (requiere backend y frontend corriendo en dev)
+npm run test:unit        # 49 unit tests del dominio y las sesiones (node:test)
+npx playwright test      # 34 tests E2E (requiere backend y frontend corriendo en dev)
 ```
 
-Los E2E cubren los flujos completos (pedido → cocina → cobro), la reconexión con pedidos en vuelo, el ciclo del día y la seguridad del transporte (tokens de mesa, roles, validación de payloads). En cada push, [GitHub Actions](.github/workflows/ci.yml) corre los unit tests, el lint, el build y la suite E2E completa. Los E2E arrancan con `/api/test/reset`, que **borra la base**: para conservar tu estado local, levantá el backend con `DB_PATH` apuntando a otro archivo.
+Los E2E cubren los flujos completos (pedido → cocina → cobro → reportes), la reconexión con pedidos en vuelo, el ciclo del día, el menú con fotos y la seguridad del transporte (tokens y códigos de mesa, roles, validación de payloads). En cada push, [GitHub Actions](.github/workflows/ci.yml) corre los unit tests, el lint, el build y la suite E2E completa. Los E2E arrancan con `/api/test/reset`, que **borra la base**: para conservar tu estado local, levantá el backend con `DB_PATH` apuntando a otro archivo.
 
 ##  Despliegue
 
@@ -137,7 +144,9 @@ npm run build   # instala dependencias y compila el frontend
 npm start       # levanta el server (usa PORT si el hosting la define)
 ```
 
-**Demo en Render:** el repo incluye un [`render.yaml`](render.yaml) que despliega la demo pública en el plan gratuito. En Render: *New → Blueprint* y elegir este repositorio.
+**Instalarlo en un local:** la [guía de instalación](docs/INSTALACION.md) cubre la nube (Render con disco persistente) o una PC del local, la configuración inicial, el día a día del personal y las copias de seguridad.
+
+**Demo en Render:** el repo incluye un [`render.yaml`](render.yaml) que despliega la demo pública en el plan gratuito. En Render: *New → Blueprint* y elegir este repositorio. El plan gratuito borra la base en cada reinicio: sirve para la demo, no para un local.
 
 | Variable | Uso |
 | --- | --- |
@@ -145,7 +154,8 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 | `TRUST_PROXY` | Cantidad de proxies delante del server (normalmente `1`), para que el freno de login vea la IP real. |
 | `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica tras un rato sin uso. |
 | `DEMO_IDLE_MINUTES` | Minutos sin actividad antes de reiniciar la demo (por defecto 30). |
-| `DB_PATH` | Ruta del archivo SQLite. |
+| `DB_PATH` | Ruta del archivo SQLite (en un disco persistente). |
+| `TZ` | Zona horaria del local (por ejemplo `America/Argentina/Buenos_Aires`): define los días de la caja y los reportes. |
 | `CORS_ORIGIN` | Solo si el frontend se publica en otro dominio (junto con `VITE_BACKEND_URL` al compilarlo). |
 | `DEV_MODE=1` | Solo desarrollo (lo setea `npm run dev`): endpoints de test, contraseñas por defecto y CORS abierto. **Nunca en un despliegue.** |
 

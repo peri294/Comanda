@@ -437,6 +437,16 @@ export const getSalesReportData = (startIso, endIso) => ({
     .map(row => ({ closedAt: row.closed_at, total: row.total, ordersCount: row.orders_count }))
 });
 
+// --- COPIA DE SEGURIDAD ---
+
+// Copia consistente de la base completa (pedidos, menú, fotos, cierres de caja) en
+// destPath, sin frenar al server: VACUUM INTO escribe una base nueva y compacta aunque
+// haya escrituras en curso. Para restaurarla alcanza con reemplazar el archivo de la base
+// con el server apagado (ver docs/INSTALACION.md).
+export const backupTo = (destPath) => {
+  db.prepare('VACUUM INTO ?').run(destPath);
+};
+
 // Solo para los tests E2E: hace que SQLite rechace toda escritura en la tabla `orders`
 // (o la vuelve a permitir), para probar qué pasa cuando una escritura falla. Es un
 // trigger TEMP: vive en esta conexión y desaparece al reiniciar el server.

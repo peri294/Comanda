@@ -818,6 +818,13 @@ body {
     font-size: 1.1rem;
     margin-top: 16px;
   }
+  /* Impresión de todas las mesas: una hoja por mesa */
+  .qr-print-page {
+    break-after: page;
+  }
+  .qr-print-page:last-child {
+    break-after: auto;
+  }
 }
 
 /* Código de visita de la mesa (pantalla del cliente y tarjeta del mostrador) */

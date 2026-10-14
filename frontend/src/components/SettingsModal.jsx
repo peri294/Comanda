@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Settings, X, ImagePlus } from 'lucide-react';
+import { Settings, X, ImagePlus, Download } from 'lucide-react';
 import { uploadImage, IMAGE_PRESETS } from '../utils/images';
+import { BACKEND_URL } from '../config';
 
 // Mismo tope que el server (MAX_BUSINESS_NAME_LENGTH en domain.js).
 const MAX_BUSINESS_NAME_LENGTH = 60;
@@ -16,6 +17,7 @@ export default function SettingsModal({ socket, token, businessName, logoUrl, on
   const [name, setName] = useState(businessName);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const [backupState, setBackupState] = useState('');
   const trimmed = name.trim();
   const unchanged = trimmed === businessName;
 
@@ -38,6 +40,25 @@ export default function SettingsModal({ socket, token, businessName, logoUrl, on
       setError(err.message);
     } finally {
       setUploading(false);
+    }
+  };
+
+  // La copia viene por fetch (lleva el token de sesión) y se guarda como archivo.
+  const downloadBackup = async () => {
+    setBackupState('Generando copia…');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/backup`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error();
+      const filename = res.headers.get('Content-Disposition')?.match(/filename="?([^";]+)"?/)?.[1] || 'comanda.db';
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      setBackupState(`Copia descargada: ${filename}`);
+    } catch {
+      setBackupState('No se pudo generar la copia. Probá de nuevo.');
     }
   };
 
@@ -91,6 +112,18 @@ export default function SettingsModal({ socket, token, businessName, logoUrl, on
               </button>
             )}
           </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '24px' }}>
+          <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--accent-gold)' }}>Copia de seguridad</span>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+            Un archivo con todo: menú, fotos, mesas, ventas y cierres de caja. Conviene descargarla
+            una vez por semana y guardarla fuera de esta computadora.
+          </p>
+          <button type="button" className="btn-secondary" style={{ padding: '10px', fontSize: '0.85rem', justifyContent: 'center' }} onClick={downloadBackup}>
+            <Download size={14} /> Descargar copia de seguridad
+          </button>
+          {backupState && <p role="status" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: 0 }}>{backupState}</p>}
         </div>
       </div>
     </div>

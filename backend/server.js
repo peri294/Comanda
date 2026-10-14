@@ -4,7 +4,8 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import crypto from 'crypto';
 import path from 'path';
-import { existsSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import {
   loadState,
@@ -29,7 +30,8 @@ import {
   imageExists,
   deleteImage,
   deleteUnusedImages,
-  getSalesReportData
+  getSalesReportData,
+  backupTo
 } from './db.js';
 import {
   newQrToken,
@@ -111,7 +113,8 @@ const app = express();
 // del proxy: sin esto, el freno de login trataría a todos los clientes como uno solo.
 // TRUST_PROXY = cantidad de proxies delante del server (normalmente 1).
 if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY));
-if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN }));
+// Content-Disposition expuesto: el frontend lee de ahí el nombre de la copia de seguridad.
+if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN, exposedHeaders: ['Content-Disposition'] }));
 app.use(express.json());
 
 // Sesiones de personal (ver auth.js): no vencen solas, se revocan con logout, desde el
@@ -538,6 +541,21 @@ app.get('/api/reports', requireRole('counter'), (req, res) => {
   if (!range) return res.status(400).json({ error: 'Rango de fechas inválido' });
   const data = getSalesReportData(range.start.toISOString(), range.end.toISOString());
   res.json({ from: req.query.from, to: req.query.to, ...buildSalesReport({ days: range.days, ...data }) });
+});
+
+// Copia de seguridad de la base completa, para descargar desde Configuración (solo el
+// mostrador). Se genera en una carpeta temporal y se borra después de enviarla.
+app.get('/api/backup', requireRole('counter'), (req, res) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'comanda-backup-'));
+  const file = path.join(dir, 'backup.db');
+  try {
+    backupTo(file);
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  const date = new Date().toISOString().slice(0, 10);
+  res.download(file, `comanda-${date}.db`, () => rmSync(dir, { recursive: true, force: true }));
 });
 
 // Vuelve el estado (memoria y SQLite, incluido el historial de pedidos archivados) a
