@@ -88,7 +88,7 @@ const APP_MODE = DEMO_MODE ? 'demo' : DEV_MODE ? 'dev' : 'production';
 
 // Ajustes del local hasta que el Mostrador los cambie (ver la tabla settings).
 const DEFAULT_SETTINGS = {
-  business_name: DEMO_MODE || DEV_MODE ? 'Café Premium' : 'Mi Cafetería',
+  business_name: DEMO_MODE || DEV_MODE ? 'Comanda' : 'Mi Cafetería',
   logo_image_id: ''
 };
 const imageUrl = (id) => (id ? `/api/images/${id}` : null);
