@@ -52,9 +52,10 @@ El sistema está expuesto a cualquiera que tenga el link de una mesa, así que e
 - **Token secreto por mesa en el QR:** sin el token no se entra a la sala de la mesa. Los pedidos, la cuenta y los llamados usan la mesa atada a la conexión, nunca un `tableId` enviado por el cliente. El Mostrador puede regenerar el QR.
 - **Código de visita:** el QR impreso es fijo, así que además hace falta un código de 4 dígitos que da el personal y cambia al cobrar la mesa. Quien se guardó el link no puede ver ni pedir a nombre del grupo siguiente. Los intentos se frenan por IP y por mesa, para no bloquear a todos los clientes que comparten el WiFi del local.
 - **Precios y nombres resueltos en el server:** el cliente manda solo IDs de producto y cantidades. Se validan los payloads, las transiciones de estado de los pedidos y el método de pago.
-- **Login de personal por rol:** contraseñas comparadas en tiempo constante (`crypto.timingSafeEqual`), sesiones revocables ("Salir" o "Cerrar Otras Sesiones" ante una tablet perdida) y bloqueo de 15 minutos tras 5 intentos fallidos desde la misma IP. Cocina solo recibe sus pedidos: la caja, los reportes, las fotos y la copia de seguridad son del mostrador.
+- **Login de personal por rol:** contraseñas comparadas en tiempo constante (`crypto.timingSafeEqual`), sesiones revocables ("Salir" o "Cerrar Otras Sesiones" ante una tablet perdida) y bloqueo de 15 minutos tras 5 intentos fallidos desde la misma IP (las IPv6, por bloque /64), más un tope por rol contra ataques repartidos. Cocina solo recibe sus pedidos: la caja, los reportes, las fotos y la copia de seguridad son del mostrador.
 - **Imágenes validadas por contenido:** el server verifica los primeros bytes de cada formato, no el tipo que declara el navegador.
-- **Seguro por defecto:** sin `DEV_MODE=1` el server no expone endpoints de test, no acepta contraseñas por defecto ni CORS abierto, y no arranca si faltan las contraseñas.
+- **Seguro por defecto:** sin `DEV_MODE=1` el server no expone endpoints de test, no acepta contraseñas por defecto ni CORS abierto, y no arranca si faltan las contraseñas, si tienen menos de 12 caracteres o si son iguales para los dos roles. Aun en desarrollo, los endpoints de test solo responden a la misma máquina.
+- **Topes y headers:** cantidades, líneas y frecuencia de pedidos por mesa, tamaño de los mensajes del socket, textos y precios del menú. CSP, HSTS, `nosniff` y `Referrer-Policy: no-referrer` en todas las respuestas, y errores sin stack.
 - **Al cobrar una mesa** el server desconecta sus celulares, para que el próximo grupo no vea los pedidos del anterior.
 
 ##  Arquitectura
@@ -129,8 +130,8 @@ cd frontend && npm install && npm run dev
 ##  Tests
 
 ```bash
-npm run test:unit        # 49 unit tests del dominio y las sesiones (node:test)
-npx playwright test      # 34 tests E2E (requiere backend y frontend corriendo en dev)
+npm run test:unit        # 58 unit tests del dominio y las sesiones (node:test)
+npx playwright test      # 37 tests E2E (requiere backend y frontend corriendo en dev)
 ```
 
 Los E2E cubren los flujos completos (pedido → cocina → cobro → reportes), la reconexión con pedidos en vuelo, el ciclo del día, el menú con fotos y la seguridad del transporte (tokens y códigos de mesa, roles, validación de payloads). En cada push, [GitHub Actions](.github/workflows/ci.yml) corre los unit tests, el lint, el build y la suite E2E completa. Los E2E arrancan con `/api/test/reset`, que **borra la base**: para conservar tu estado local, levantá el backend con `DB_PATH` apuntando a otro archivo.
