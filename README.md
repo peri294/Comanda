@@ -13,7 +13,7 @@ Sistema de pedidos en tiempo real para cafeterías: el cliente escanea el QR de 
 [![CI](https://github.com/peri294/Comanda/actions/workflows/ci.yml/badge.svg)](https://github.com/peri294/Comanda/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-<!-- TODO: link a la demo pública en Render (ver "Despliegue") -->
+**[Demo en vivo](https://comanda-rm70.onrender.com/)**: el portal tiene los links de las mesas y las contraseñas del personal. Corre en el plan gratuito de Render, así que si estuvo inactiva la primera carga tarda cerca de un minuto.
 
 <p align="center">
   <img src="docs/screenshots/mostrador.png" alt="Panel del mostrador con el estado de cada mesa, la caja del día y los llamados al mozo" width="100%">
