@@ -19,12 +19,21 @@ export const passwordMatches = (input, expected) => {
 // perdida, alguien que dejó de trabajar) o al reiniciar el server, que es también lo
 // que pasa al cambiar las contraseñas. Viven en memoria a propósito: guardarlos en
 // disco sería un riesgo innecesario.
-export const createSessionStore = () => {
-  const sessions = new Map(); // token -> role
+//
+// Tope de sesiones por rol (maxPerRole): sin él, cada login sumaba una entrada para
+// siempre, y en la demo (contraseñas públicas) un script podía crecer la memoria hasta
+// tirar el server. Al pasarlo se revoca la sesión más vieja de ese rol; un local real
+// no tiene ni cerca de 50 pantallas por rol.
+export const createSessionStore = ({ maxPerRole = 50 } = {}) => {
+  const sessions = new Map(); // token -> role, en orden de creación
 
   return {
+    // Si hubo que hacer lugar, la sesión revocada deja de valer al instante; server.js
+    // corta la pantalla que la usaba con expelStaleStaff.
     create(role) {
       const token = crypto.randomUUID();
+      const ofRole = [...sessions].filter(([, r]) => r === role);
+      if (ofRole.length >= maxPerRole) sessions.delete(ofRole[0][0]);
       sessions.set(token, role);
       return token;
     },
@@ -50,6 +59,23 @@ export const createSessionStore = () => {
       return sessions.size;
     }
   };
+};
+
+// Clave del freno de login para una IP. Una IPv6 se agrupa por su /64: un proveedor le da
+// a cada cliente un bloque /64 entero, así que sin agrupar un atacante tendría una IP
+// distinta (y un contador nuevo) para cada intento. Las IPv4 mapeadas a IPv6
+// (::ffff:1.2.3.4) cuentan como su IPv4.
+export const throttleKeyForIp = (ip) => {
+  if (typeof ip !== 'string' || ip === '') return 'unknown';
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return mapped[1];
+  if (!ip.includes(':')) return ip;
+  // Expande "::" para tomar los primeros cuatro grupos.
+  const [head, tail = ''] = ip.toLowerCase().split('%')[0].split('::');
+  const headGroups = head ? head.split(':') : [];
+  const tailGroups = ip.includes('::') && tail ? tail.split(':') : [];
+  const groups = [...headGroups, ...Array(Math.max(0, 8 - headGroups.length - tailGroups.length)).fill('0'), ...tailGroups];
+  return `${groups.slice(0, 4).map(g => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
 };
 
 // Freno de fuerza bruta: después de maxFailures intentos fallidos desde la misma clave
@@ -79,14 +105,18 @@ export const createLoginThrottle = ({ maxFailures, windowMs, now = Date.now }) =
       return { allowed: false, retryAfterMs: entry.firstAt + windowMs - now() };
     },
     fail(key) {
-      // Limpieza de ventanas vencidas de otras claves, para que el Map no crezca sin límite
-      for (const k of failures.keys()) current(k);
       const entry = current(key);
       if (entry) entry.count++;
       else failures.set(key, { count: 1, firstAt: now() });
     },
     succeed(key) {
       failures.delete(key);
+    },
+    // Borra las ventanas vencidas, para que el Map no crezca sin límite. Antes se hacía en
+    // cada fail(), y con muchas IP distintas cada intento recorría todo el Map; ahora
+    // server.js la llama cada un minuto.
+    sweep() {
+      for (const k of failures.keys()) current(k);
     },
     get size() {
       return failures.size;

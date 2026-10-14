@@ -12,6 +12,14 @@ import {
   isVisitCode,
   closeOrders,
   sanitizeSettings,
+  orderRateDecision,
+  MAX_ITEM_QUANTITY,
+  MAX_ORDER_LINES,
+  MAX_PRICE,
+  MAX_PRODUCT_NAME_LENGTH,
+  MAX_TABLE_NUMBER,
+  MAX_ORDERS_PER_WINDOW,
+  ORDER_RATE_WINDOW_MS,
   parseReportRange,
   buildSalesReport,
   localDateKey,
@@ -448,5 +456,49 @@ describe('reportes de ventas', () => {
     assert.equal(report.total, 0);
     assert.equal(report.averageTicket, 0);
     assert.deepEqual(report.topProducts, []);
+  });
+});
+
+describe('topes de pedidos y menú', () => {
+  const menu = [{ id: 'm1', name: 'Espresso', price: 1800, available: true }];
+  const categories = [{ id: 'cafe', name: 'Café' }];
+
+  test('sanitizeItems descarta cantidades por encima del tope (1e308 daba un total Infinity)', () => {
+    assert.deepEqual(sanitizeItems([{ productId: 'm1', quantity: 1e308 }], menu), []);
+    assert.deepEqual(sanitizeItems([{ productId: 'm1', quantity: MAX_ITEM_QUANTITY + 1 }], menu), []);
+    assert.equal(sanitizeItems([{ productId: 'm1', quantity: MAX_ITEM_QUANTITY }], menu)[0].quantity, MAX_ITEM_QUANTITY);
+  });
+
+  test('sanitizeItems rechaza un pedido con demasiadas líneas', () => {
+    const lines = (n) => Array.from({ length: n }, () => ({ productId: 'm1', quantity: 1 }));
+    assert.equal(sanitizeItems(lines(MAX_ORDER_LINES), menu).length, MAX_ORDER_LINES);
+    assert.deepEqual(sanitizeItems(lines(MAX_ORDER_LINES + 1), menu), []);
+  });
+
+  test('sanitizeMenuFields: precio máximo y textos recortados', () => {
+    assert.equal(sanitizeMenuFields({ name: 'X', price: MAX_PRICE + 1, category: 'cafe' }, categories), null);
+    const long = sanitizeMenuFields({ name: 'n'.repeat(500), description: 'd'.repeat(5000), price: 100, category: 'cafe' }, categories);
+    assert.equal(long.name.length, MAX_PRODUCT_NAME_LENGTH);
+    assert.equal(long.description.length, 300);
+  });
+
+  test('resolveNewTableId no pasa del número máximo de mesa', () => {
+    assert.equal(resolveNewTableId([], String(MAX_TABLE_NUMBER)), String(MAX_TABLE_NUMBER));
+    assert.equal(resolveNewTableId([], String(MAX_TABLE_NUMBER + 1)), null);
+    assert.equal(resolveNewTableId([], '1e20'), null);
+  });
+
+  test('orderRateDecision frena el pedido número 11 de la ventana y vuelve a aceptar al vencer', () => {
+    const now = 1_000_000;
+    let recent = [];
+    for (let i = 0; i < MAX_ORDERS_PER_WINDOW; i++) {
+      const decision = orderRateDecision(recent, now + i);
+      assert.equal(decision.allowed, true);
+      recent = decision.recent;
+    }
+    const blocked = orderRateDecision(recent, now + 100);
+    assert.equal(blocked.allowed, false);
+    assert.equal(blocked.retryInMs, ORDER_RATE_WINDOW_MS - 100);
+    assert.equal(orderRateDecision(recent, now + ORDER_RATE_WINDOW_MS).allowed, true);
   });
 });

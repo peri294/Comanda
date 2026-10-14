@@ -21,6 +21,22 @@ export const PAYMENT_METHODS = ['efectivo', 'tarjeta'];
 
 export const MAX_NOTES_LENGTH = 300;
 
+// Topes de lo que el server acepta. Los pedidos y el menú se difunden a todas las
+// pantallas y se guardan para siempre: sin topes, un solo mensaje con miles de items o
+// una cantidad gigante (1e308 da un total Infinity) congela las pantallas o rompe la caja.
+export const MAX_ITEM_QUANTITY = 50;
+export const MAX_ORDER_LINES = 30;
+export const MAX_PRODUCT_NAME_LENGTH = 80;
+export const MAX_PRODUCT_DESCRIPTION_LENGTH = 300;
+export const MAX_PRICE = 10_000_000;
+export const MAX_TABLE_NUMBER = 999;
+export const MAX_TABLES = 200;
+export const MAX_MENU_ITEMS = 300;
+export const MAX_CATEGORIES = 50;
+// Freno de pedidos por mesa: un grupo real manda unas pocas rondas por hora.
+export const ORDER_RATE_WINDOW_MS = 5 * 60_000;
+export const MAX_ORDERS_PER_WINDOW = 10;
+
 // Tras atender un llamado al mozo, cuánto hay que esperar para poder volver a llamar.
 export const ASSISTANCE_REOPEN_COOLDOWN_MS = 10_000;
 
@@ -60,12 +76,12 @@ export const resolveNewTableId = (existingIds, requested) => {
   const taken = new Set(existingIds);
   if (requested !== undefined && requested !== null && String(requested).trim() !== '') {
     const n = Number(String(requested).trim());
-    if (!Number.isInteger(n) || n < 1 || taken.has(String(n))) return null;
+    if (!Number.isInteger(n) || n < 1 || n > MAX_TABLE_NUMBER || taken.has(String(n))) return null;
     return String(n);
   }
   let n = 1;
   while (taken.has(String(n))) n++;
-  return String(n);
+  return n <= MAX_TABLE_NUMBER ? String(n) : null;
 };
 
 export const isBillRequested = (table) => table.status === 'esperando_cuenta' || table.status === 'pagando_tarjeta';
@@ -156,10 +172,10 @@ export const itemsTotal = (items) => items.reduce((sum, item) => sum + item.pric
 // desaparecer en silencio (y con un solo item, cancelaría el pedido entero). Solo los
 // items nuevos se validan estrictamente contra el menú vigente y su disponibilidad.
 export const sanitizeItems = (rawItems, menu, previousItems = []) => {
-  if (!Array.isArray(rawItems)) return [];
+  if (!Array.isArray(rawItems) || rawItems.length > MAX_ORDER_LINES) return [];
   return rawItems.reduce((acc, item) => {
     const quantity = Math.floor(Number(item?.quantity));
-    if (!Number.isFinite(quantity) || quantity <= 0) return acc;
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > MAX_ITEM_QUANTITY) return acc;
 
     const existing = previousItems.find(i => i.productId === item?.productId);
     const menuItem = menu.find(m => m.id === item?.productId);
@@ -248,6 +264,16 @@ export const requestBill = (table, paymentMethod) => {
 //   habilita el botón sin bloquear un segundo pedido de ayuda legítimo. retryInMs dice
 //   cuánto falta, así la UI rehabilita el botón en el momento exacto.
 // - 'create': llamado nuevo.
+// Freno de pedidos de una mesa: recibe los instantes de sus pedidos recientes y decide
+// si acepta uno más. Devuelve también la lista podada, para guardarla.
+export const orderRateDecision = (recent = [], now) => {
+  const inWindow = recent.filter(at => now - at < ORDER_RATE_WINDOW_MS);
+  if (inWindow.length >= MAX_ORDERS_PER_WINDOW) {
+    return { allowed: false, retryInMs: inWindow[0] + ORDER_RATE_WINDOW_MS - now, recent: inWindow };
+  }
+  return { allowed: true, recent: [...inWindow, now] };
+};
+
 export const assistanceDecision = (existing, now) => {
   if (!existing) return { action: 'create' };
   if (!existing.resolved) return { action: 'pending' };
@@ -266,14 +292,14 @@ export const assistanceDecision = (existing, now) => {
 // La categoría tiene que existir: un producto con una categoría inventada no tendría
 // pestaña donde aparecer en el menú del cliente.
 export const sanitizeMenuFields = ({ name, description, price, category, image } = {}, categories = []) => {
-  const cleanName = typeof name === 'string' ? name.trim() : '';
+  const cleanName = typeof name === 'string' ? name.trim().slice(0, MAX_PRODUCT_NAME_LENGTH) : '';
   const numPrice = Number(price);
-  if (!cleanName || !Number.isFinite(numPrice) || numPrice <= 0 || !categories.some(c => c.id === category)) {
+  if (!cleanName || !Number.isFinite(numPrice) || numPrice <= 0 || numPrice > MAX_PRICE || !categories.some(c => c.id === category)) {
     return null;
   }
   return {
     name: cleanName,
-    description: typeof description === 'string' ? description.trim() : '',
+    description: typeof description === 'string' ? description.trim().slice(0, MAX_PRODUCT_DESCRIPTION_LENGTH) : '',
     price: numPrice,
     category,
     // El icono se elige por nombre; para productos nuevos sin icono propio se usa

@@ -1,7 +1,7 @@
 // Unit tests de sesiones y freno de login (auth.js), con un reloj falso.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { passwordMatches, createSessionStore, createLoginThrottle } from './auth.js';
+import { passwordMatches, createSessionStore, createLoginThrottle, throttleKeyForIp } from './auth.js';
 
 const fakeClock = (start = 1_000_000) => {
   let t = start;
@@ -89,12 +89,49 @@ describe('createLoginThrottle', () => {
     assert.equal(throttle.check('ip').allowed, true);
   });
 
-  test('las ventanas vencidas de otras IPs se limpian', () => {
+  test('sweep limpia las ventanas vencidas de otras IPs', () => {
     const { clock, throttle } = setup();
     throttle.fail('a');
     throttle.fail('b');
     clock.advance(60_000);
     throttle.fail('c');
+    throttle.sweep();
     assert.equal(throttle.size, 1);
+  });
+});
+
+describe('throttleKeyForIp', () => {
+  test('una IPv4 es su propia clave, también mapeada a IPv6', () => {
+    assert.equal(throttleKeyForIp('200.1.2.3'), '200.1.2.3');
+    assert.equal(throttleKeyForIp('::ffff:200.1.2.3'), '200.1.2.3');
+  });
+
+  test('las IPv6 de un mismo /64 comparten clave', () => {
+    const key = throttleKeyForIp('2001:db8:abcd:12:1:2:3:4');
+    assert.equal(key, '2001:db8:abcd:12::/64');
+    assert.equal(throttleKeyForIp('2001:db8:abcd:12:ffff::9'), key);
+    assert.equal(throttleKeyForIp('2001:0db8:abcd:0012::1'), key);
+    assert.notEqual(throttleKeyForIp('2001:db8:abcd:13::1'), key);
+  });
+
+  test('IPv6 abreviadas y valores raros', () => {
+    assert.equal(throttleKeyForIp('::1'), '0:0:0:0::/64');
+    assert.equal(throttleKeyForIp('fe80::1%eth0'), 'fe80:0:0:0::/64');
+    assert.equal(throttleKeyForIp(undefined), 'unknown');
+  });
+});
+
+describe('tope de sesiones por rol', () => {
+  test('al pasar el tope se revoca la sesión más vieja de ese rol, no la de otro', () => {
+    const store = createSessionStore({ maxPerRole: 2 });
+    const kitchen = store.create('kitchen');
+    const first = store.create('counter');
+    const second = store.create('counter');
+    const third = store.create('counter');
+    assert.equal(store.roleOf(first), null);
+    assert.equal(store.roleOf(second), 'counter');
+    assert.equal(store.roleOf(third), 'counter');
+    assert.equal(store.roleOf(kitchen), 'kitchen');
+    assert.equal(store.size, 3);
   });
 });

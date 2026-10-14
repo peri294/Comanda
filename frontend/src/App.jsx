@@ -75,8 +75,9 @@ export default function App() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSocket(newSocket);
     // Referencia global para los tests E2E (simulan cortes y reconexiones de socket
-    // llamando a __socket.disconnect()/connect() desde la página).
-    window.__socket = newSocket;
+    // llamando a __socket.disconnect()/connect() desde la página). Solo en desarrollo:
+    // en el build de producción no queda expuesta.
+    if (import.meta.env.DEV) window.__socket = newSocket;
 
     return () => {
       newSocket.close();

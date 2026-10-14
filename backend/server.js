@@ -62,9 +62,13 @@ import {
   decodeImageUpload,
   parseReportRange,
   buildSalesReport,
-  newVisitCode
+  newVisitCode,
+  orderRateDecision,
+  MAX_TABLES,
+  MAX_MENU_ITEMS,
+  MAX_CATEGORIES
 } from './domain.js';
-import { passwordMatches, createSessionStore, createLoginThrottle } from './auth.js';
+import { passwordMatches, createSessionStore, createLoginThrottle, throttleKeyForIp } from './auth.js';
 
 // Seguro por defecto: lo que solo sirve para desarrollar (endpoints de test que borran
 // la base, contraseñas por defecto, CORS abierto) existe únicamente con DEV_MODE=1, que
@@ -91,12 +95,28 @@ const publicSettings = () => {
 };
 
 // --- AUTENTICACION DE PERSONAL ---
+
+const MIN_PASSWORD_LENGTH = 12;
 // Password compartida por rol (cocina/mostrador), pensada para una tablet compartida
 // por todo el turno, no para trazabilidad por empleado. Fuera de desarrollo y del modo
 // demo es obligatorio definirlas: no se arranca con las credenciales por defecto.
-if (!DEV_MODE && !DEMO_MODE && (!process.env.KITCHEN_PASSWORD || !process.env.COUNTER_PASSWORD)) {
-  console.error('Faltan KITCHEN_PASSWORD y/o COUNTER_PASSWORD (obligatorias salvo DEV_MODE=1 o DEMO_MODE=1).');
-  process.exit(1);
+if (!DEV_MODE && !DEMO_MODE) {
+  const { KITCHEN_PASSWORD, COUNTER_PASSWORD } = process.env;
+  if (!KITCHEN_PASSWORD || !COUNTER_PASSWORD) {
+    console.error('Faltan KITCHEN_PASSWORD y/o COUNTER_PASSWORD (obligatorias salvo DEV_MODE=1 o DEMO_MODE=1).');
+    process.exit(1);
+  }
+  // El freno de login frena a una IP, no a un ataque repartido entre muchas: lo que
+  // protege de verdad es que la contraseña no se pueda adivinar.
+  if (KITCHEN_PASSWORD.length < MIN_PASSWORD_LENGTH || COUNTER_PASSWORD.length < MIN_PASSWORD_LENGTH) {
+    console.error(`KITCHEN_PASSWORD y COUNTER_PASSWORD tienen que tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`);
+    process.exit(1);
+  }
+  // Con la misma contraseña, cualquiera de la cocina entra también al mostrador.
+  if (KITCHEN_PASSWORD === COUNTER_PASSWORD) {
+    console.error('KITCHEN_PASSWORD y COUNTER_PASSWORD tienen que ser distintas.');
+    process.exit(1);
+  }
 }
 const ROLE_PASSWORDS = {
   kitchen: process.env.KITCHEN_PASSWORD || 'cocina123',
@@ -109,6 +129,36 @@ const ROLE_PASSWORDS = {
 const CORS_ORIGIN = process.env.CORS_ORIGIN || (DEV_MODE ? '*' : null);
 
 const app = express();
+app.disable('x-powered-by');
+
+// Headers de seguridad para todo lo que sirve el server (el build del frontend incluido).
+// La CSP permite solo lo que la app usa: sus propios scripts, estilos inline (React los
+// usa en todos lados), las fuentes de Google que importa index.css, las imágenes propias
+// y las de vista previa (data:/blob:) y el WebSocket al mismo server.
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self' ws: wss:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'"
+  ].join('; '),
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  // El link de cada mesa lleva su token: que no viaje en el Referer a otros sitios.
+  'Referrer-Policy': 'no-referrer',
+  // Los navegadores lo ignoran por HTTP; detrás de HTTPS (Render) fija el HTTPS.
+  'Strict-Transport-Security': 'max-age=15552000'
+};
+app.use((req, res, next) => {
+  res.set(SECURITY_HEADERS);
+  next();
+});
 // Detrás de un proxy (Render, Railway, Fly.io) todas las conexiones llegan desde la IP
 // del proxy: sin esto, el freno de login trataría a todos los clientes como uno solo.
 // TRUST_PROXY = cantidad de proxies delante del server (normalmente 1).
@@ -119,10 +169,17 @@ app.use(express.json());
 
 // Sesiones de personal (ver auth.js): no vencen solas, se revocan con logout, desde el
 // Mostrador (revoke-other-sessions) o al reiniciar el server.
-const sessions = createSessionStore();
+// Tope de sesiones por rol (ver createSessionStore): 50 sobra para un local. En desarrollo
+// es mucho más alto porque una corrida de los E2E abre decenas de sesiones, y con el tope
+// real el server revocaba la de un spec que todavía la estaba usando.
+const sessions = createSessionStore({ maxPerRole: DEV_MODE ? 1000 : 50 });
 
-// Freno de fuerza bruta del login: 5 intentos fallidos por IP cada 15 minutos.
+// Freno de fuerza bruta del login: 5 intentos fallidos por IP cada 15 minutos (las IPv6
+// agrupadas por /64, ver throttleKeyForIp). Además, un tope por rol para un ataque
+// repartido entre muchas IP: pasados 50 fallos en 15 minutos, ese rol no acepta logins
+// hasta que vence la ventana. Las sesiones abiertas siguen funcionando.
 const loginThrottle = createLoginThrottle({ maxFailures: 5, windowMs: 15 * 60_000 });
+const roleLoginThrottle = createLoginThrottle({ maxFailures: 50, windowMs: 15 * 60_000 });
 
 // Freno para el código de visita de las mesas: con 4 dígitos, sin límite se probarían los
 // 10.000 en segundos. La clave es IP + mesa, no solo la IP: con la app en la nube, todos
@@ -159,12 +216,17 @@ const requireRole = (role) => (req, res, next) =>
   requireStaffAuth(req, res, () => (req.staffRole === role ? next() : res.status(403).json({ error: 'Sin permiso' })));
 
 const httpServer = createServer(app);
-const io = new Server(httpServer, CORS_ORIGIN ? {
-  cors: {
-    origin: CORS_ORIGIN,
-    methods: ['GET', 'POST']
-  }
-} : {});
+// maxHttpBufferSize: ningún evento legítimo pesa más de unos pocos KB (las fotos van por
+// HTTP). El default de 1 MB dejaba mandar pedidos con decenas de miles de items.
+const io = new Server(httpServer, {
+  maxHttpBufferSize: 64 * 1024,
+  ...(CORS_ORIGIN && {
+    cors: {
+      origin: CORS_ORIGIN,
+      methods: ['GET', 'POST']
+    }
+  })
+});
 
 // --- ESTADO DE TRABAJO (en memoria, respaldado por SQLite) ---
 
@@ -308,6 +370,10 @@ let menuCache = persistedState.menu;
 let categoriesCache = persistedState.categories;
 // Fotos subidas que nunca se asignaron a un producto ni al logo.
 deleteUnusedImages([...menuCache.map(m => m.imageId), getSettings(DEFAULT_SETTINGS).logo_image_id].filter(Boolean));
+
+// Instantes de los pedidos recientes de cada mesa, para el freno de orderRateDecision.
+// Solo en memoria: un reinicio a lo sumo deja pedir unos pocos más.
+const recentOrdersByTable = new Map();
 
 // Solicitudes de "Llamar al Mozo" activas, indexadas por mesa: { timestamp, resolved, resolvedAt }
 // (las reglas de duplicados y cooldown están en assistanceDecision, ver domain.js).
@@ -485,7 +551,10 @@ app.post('/api/auth/login', (req, res) => {
   if (!Object.hasOwn(ROLE_PASSWORDS, role)) {
     return res.status(400).json({ error: 'Rol inválido' });
   }
-  const limit = loginThrottle.check(req.ip);
+  const ipKey = throttleKeyForIp(req.ip);
+  const ipLimit = loginThrottle.check(ipKey);
+  const roleLimit = roleLoginThrottle.check(role);
+  const limit = !ipLimit.allowed ? ipLimit : roleLimit;
   if (!limit.allowed) {
     const retryAfterSec = Math.ceil(limit.retryAfterMs / 1000);
     res.set('Retry-After', String(retryAfterSec));
@@ -494,11 +563,15 @@ app.post('/api/auth/login', (req, res) => {
     });
   }
   if (!passwordMatches(password, ROLE_PASSWORDS[role])) {
-    loginThrottle.fail(req.ip);
+    loginThrottle.fail(ipKey);
+    roleLoginThrottle.fail(role);
     return res.status(401).json({ error: 'Contraseña incorrecta' });
   }
-  loginThrottle.succeed(req.ip);
-  res.json({ token: sessions.create(role) });
+  loginThrottle.succeed(ipKey);
+  const token = sessions.create(role);
+  // Si se llegó al tope de sesiones del rol, la más vieja se revocó: se corta su pantalla.
+  expelStaleStaff();
+  res.json({ token });
 });
 
 // Logout: revoca el token en el server (antes cerrar sesión solo lo borraba del
@@ -582,9 +655,17 @@ const resetToSeed = ({ keepQrTokens = false, enableTables = false } = {}) => {
   resetState(tables, DEFAULT_MENU, DEFAULT_CATEGORIES);
 };
 
+// Conexión desde la misma máquina. Se mira el socket y no req.ip, que con TRUST_PROXY
+// sale de un header que el cliente puede inventar.
+const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+const loopbackOnly = (req, res, next) => (isLoopback(req) ? next() : res.status(403).json({ error: 'Solo desde este equipo' }));
+
 // Solo para los tests E2E. Existe únicamente con DEV_MODE=1: borra la base sin pedir
 // login, así que no puede quedar expuesto en un despliegue real (ni en la demo pública).
+// Además solo responde a la misma máquina: un `npm run dev` en el WiFi del local no
+// puede dejar que cualquier celular conectado borre la base.
 if (DEV_MODE) {
+  app.use('/api/test', loopbackOnly);
   app.post('/api/test/reset', (req, res) => {
     // Las conexiones atadas a mesas viejas pierden el acceso: cada reset genera tokens nuevos.
     // El menú también vuelve a la semilla: los specs de menú crean/borran productos
@@ -594,6 +675,10 @@ if (DEV_MODE) {
     // la suite tiene que arrancar sin ese bloqueo.
     visitCodeThrottle = newVisitCodeThrottle();
     previousVisitCodes.clear();
+    recentOrdersByTable.clear();
+    // Las sesiones de corridas anteriores no le sirven a nadie: cada corrida arranca sin ellas.
+    sessions.revokeAllExcept(null);
+    expelStaleStaff();
     resetToSeed();
     res.json({ ok: true });
   });
@@ -609,8 +694,10 @@ if (DEV_MODE) {
 // Links con token de cada mesa para el simulador de QR del portal y para los tests
 // E2E. Expone los tokens sin login, por eso solo existe en desarrollo y en la demo:
 // en un despliegue real los links salen solo del Mostrador.
+// En desarrollo (sin DEMO_MODE) también solo desde la misma máquina: los links llevan el
+// token y el código de cada mesa.
 if (DEV_MODE || DEMO_MODE) {
-  app.get('/api/demo/table-links', (req, res) => {
+  app.get('/api/demo/table-links', DEMO_MODE ? (req, res, next) => next() : loopbackOnly, (req, res) => {
     res.json(tables.map(t => ({ id: t.id, qrToken: t.qrToken, visitCode: t.visitCode })));
   });
 }
@@ -722,7 +809,7 @@ io.on('connection', (socket) => {
         socket.emit('visit-code-required', { tableId, changed: true });
         return;
       }
-      const throttleKey = `${socketIp(socket)}|${tableId}`;
+      const throttleKey = `${throttleKeyForIp(socketIp(socket))}|${tableId}`;
       const limit = visitCodeThrottle.check(throttleKey);
       if (!limit.allowed) {
         socket.emit('visit-code-error', { retryAfterMs: limit.retryAfterMs });
@@ -775,6 +862,10 @@ io.on('connection', (socket) => {
     const items = sanitizeItems(orderData?.items, menuCache);
     // Nada válido para pedir (menú manipulado, cantidades inválidas, todo agotado, etc.)
     if (items.length === 0) return reply({ ok: false, error: 'no_valid_items' });
+
+    const rate = orderRateDecision(recentOrdersByTable.get(tableId), Date.now());
+    recentOrdersByTable.set(tableId, rate.recent);
+    if (!rate.allowed) return reply({ ok: false, error: 'rate_limited', retryInMs: rate.retryInMs });
 
     const newOrder = {
       id: `ord-${crypto.randomUUID()}`,
@@ -921,6 +1012,7 @@ io.on('connection', (socket) => {
   // más chico sin usar. La mesa nace con un token nuevo: reponer una mesa dada de baja
   // necesita un QR nuevo (el viejo, con el token anterior, ya no vale).
   staffOn('counter', 'add-table', ({ id } = {}) => {
+    if (tables.length >= MAX_TABLES) return;
     const tableId = resolveNewTableId(tables.map(t => t.id), id);
     if (!tableId) return;
 
@@ -1078,6 +1170,7 @@ io.on('connection', (socket) => {
 
   // Evento: Agregar un producto al menú
   staffOn('counter', 'menu-add', (data) => {
+    if (menuCache.length >= MAX_MENU_ITEMS) return;
     const fields = sanitizeMenuFields(data, categoriesCache);
     if (!fields) return;
 
@@ -1129,6 +1222,7 @@ io.on('connection', (socket) => {
   const broadcastCategories = () => io.emit('categories-updated', categoriesCache);
 
   staffOn('counter', 'category-add', (data) => {
+    if (categoriesCache.length >= MAX_CATEGORIES) return;
     const fields = sanitizeCategoryFields(data);
     if (!fields) return;
     const category = { id: newCategoryId(), ...fields, position: categoriesCache.length };
@@ -1196,6 +1290,17 @@ io.on('connection', (socket) => {
 const FRONTEND_DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'frontend', 'dist');
 if (existsSync(FRONTEND_DIST)) app.use(express.static(FRONTEND_DIST));
 
+// Errores de Express (JSON malformado, un error en un endpoint): respuesta corta, sin el
+// stack ni las rutas del server, que el handler por defecto muestra si NODE_ENV no es
+// production (este proyecto no la usa, ver DEV_MODE).
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'JSON inválido' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Demasiado grande' });
+  console.error('Error en', req.method, req.path, err);
+  res.status(err.status || 500).json({ error: 'Error interno' });
+});
+
 if (DEMO_MODE) {
   // Cada visitante llega a una demo limpia y con las mesas habilitadas.
   resetDemo();
@@ -1204,6 +1309,13 @@ if (DEMO_MODE) {
     if (lastDemoActivityAt > lastDemoResetAt && idleMs > DEMO_IDLE_MINUTES * 60_000) resetDemo();
   }, 60_000).unref();
 }
+
+// Limpieza de las ventanas vencidas de los frenos, para que no crezcan sin límite.
+setInterval(() => {
+  loginThrottle.sweep();
+  roleLoginThrottle.sweep();
+  visitCodeThrottle.sweep();
+}, 60_000).unref();
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {

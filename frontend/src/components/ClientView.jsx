@@ -14,8 +14,14 @@ import { useCategories } from '../hooks/useCategories';
 const ORDER_ERRORS = {
   table_unavailable: 'Tu mesa ya no está disponible. Escaneá de nuevo el QR de la mesa.',
   table_disabled: 'La mesa no está habilitada para pedir. Consultá al personal.',
-  no_valid_items: 'Los productos del carrito ya no están disponibles.'
+  no_valid_items: 'Los productos del carrito ya no están disponibles.',
+  rate_limited: 'Se enviaron muchos pedidos seguidos desde esta mesa. Esperá unos minutos o llamá al mozo.'
 };
+
+// Mismos topes que el server (MAX_ITEM_QUANTITY y MAX_ORDER_LINES en domain.js): un
+// pedido que los pasa se rechaza entero.
+const MAX_ITEM_QUANTITY = 50;
+const MAX_ORDER_LINES = 30;
 
 // Código de visita guardado por mesa y QR, para no pedirlo de nuevo al recargar. Si el
 // navegador no deja usar localStorage (modo privado estricto), se pide en cada carga.
@@ -267,9 +273,10 @@ export default function ClientView({ tableId, qrToken, socket }) {
       const existing = prevCart.find(item => item.id === product.id);
       if (existing) {
         return prevCart.map(item =>
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+          item.id === product.id ? { ...item, quantity: Math.min(item.quantity + 1, MAX_ITEM_QUANTITY) } : item
         );
       }
+      if (prevCart.length >= MAX_ORDER_LINES) return prevCart;
       return [...prevCart, { ...product, quantity: 1 }];
     });
   };
@@ -279,7 +286,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
     setCart(prevCart => {
       return prevCart.map(item => {
         if (item.id === productId) {
-          const nextQty = item.quantity + amount;
+          const nextQty = Math.min(item.quantity + amount, MAX_ITEM_QUANTITY);
           return nextQty > 0 ? { ...item, quantity: nextQty } : null;
         }
         return item;
