@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Monitor, CreditCard, DollarSign, Bell, X, Eye, LogOut, Pencil, Plus, Minus, Trash2, Hand, Check, Archive, BookOpen, QrCode, RefreshCw, Lock, LockOpen, Sun, Moon, ShieldOff, Settings, BarChart3, KeyRound } from 'lucide-react';
 import { useSocketRoom } from '../hooks/useSocketRoom';
 import { BACKEND_URL } from '../config';
@@ -66,6 +66,11 @@ export default function CounterView({ socket, token, onLogout, businessName, log
 
   // Mesas que llamaron al mozo y todavía no fueron atendidas
   const [assistanceRequests, setAssistanceRequests] = useState([]);
+  // Cambios de llamados (nuevos o atendidos) que pasan mientras se espera /api/initial-state.
+  // La respuesta se arma antes que ellos: si pisara la lista, un llamado que entró en vivo
+  // en ese momento desaparecía del panel para siempre (no hay otro evento que lo reponga).
+  // tableId → llamado, o null si se atendió.
+  const assistanceDuringFetch = useRef(null);
 
   // Administración del menú (alta/edición/baja/stock de productos)
   const [isMenuAdminOpen, setIsMenuAdminOpen] = useState(false);
@@ -84,6 +89,8 @@ export default function CounterView({ socket, token, onLogout, businessName, log
   // recarga de página tampoco la resetea a $0).
   useEffect(() => {
     const fetchInitialState = () => {
+      const changes = new Map();
+      assistanceDuringFetch.current = changes;
       fetch(`${BACKEND_URL}/api/initial-state`, {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -91,10 +98,17 @@ export default function CounterView({ socket, token, onLogout, businessName, log
         .then(data => {
           if (data.tables) setTables(data.tables);
           if (data.orders) setActiveOrders(data.orders);
-          if (data.assistanceRequests) setAssistanceRequests(data.assistanceRequests);
+          if (data.assistanceRequests) {
+            const kept = data.assistanceRequests.filter(a => !changes.has(a.tableId));
+            const live = [...changes.values()].filter(Boolean);
+            setAssistanceRequests([...kept, ...live]);
+          }
           if (data.dailySales !== undefined) setDailySales(data.dailySales);
         })
-        .catch(err => console.error("Error fetching initial counter state:", err));
+        .catch(err => console.error("Error fetching initial counter state:", err))
+        .finally(() => {
+          if (assistanceDuringFetch.current === changes) assistanceDuringFetch.current = null;
+        });
     };
 
     if (!socket) return;
@@ -175,6 +189,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
 
     // Una mesa llamó al mozo
     socket.on('assistance-requested', ({ tableId, timestamp }) => {
+      assistanceDuringFetch.current?.set(tableId, { tableId, timestamp });
       setAssistanceRequests(prev => {
         if (prev.find(a => a.tableId === tableId)) return prev;
         return [...prev, { tableId, timestamp }];
@@ -202,6 +217,7 @@ export default function CounterView({ socket, token, onLogout, businessName, log
 
   const resolveAssistance = (tableId) => {
     socket.emit('resolve-assistance', { tableId });
+    assistanceDuringFetch.current?.set(tableId, null);
     setAssistanceRequests(prev => prev.filter(a => a.tableId !== tableId));
   };
 

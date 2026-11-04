@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { clientUrl } from './helpers.js';
+import { clientUrl, connectStaff, addTable } from './helpers.js';
 
 test('flujo de asistencia y cuenta parcial', async ({ browser }) => {
   const clientContext = await browser.newContext();
@@ -52,4 +52,48 @@ test('flujo de asistencia y cuenta parcial', async ({ browser }) => {
   await cuentaParcialHeader.click();
   
   await expect(clientPage.locator('.glass-panel:has-text("Mi Cuenta Parcial")').getByText('1x Espresso Italiano')).toBeVisible();
+});
+
+// Regresión (corrida 5 del CI): al entrar, el Mostrador pide /api/initial-state. Si un
+// llamado al mozo llegaba en vivo mientras esa respuesta venía en camino, la respuesta
+// (tomada antes del llamado) pisaba la lista y el llamado desaparecía del panel.
+test('un llamado que llega mientras el Mostrador carga su estado inicial no se pierde', async ({ browser }) => {
+  // Mesa 48: propia de este test (ver addTable en helpers.js)
+  const counter = await connectStaff('counter', 'mostrador123');
+  await addTable(counter, '48');
+  counter.socket.close();
+
+  const clientPage = await (await browser.newContext()).newPage();
+  const counterPage = await (await browser.newContext()).newPage();
+
+  // La respuesta se toma del server en el momento (sin el llamado) y se entrega después
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let intercepted;
+  const snapshotTaken = new Promise(resolve => { intercepted = resolve; });
+  await counterPage.route('**/api/initial-state', async route => {
+    const response = await route.fetch();
+    intercepted();
+    await gate;
+    await route.fulfill({ response });
+  });
+
+  await counterPage.goto('/?view=counter');
+  await counterPage.getByPlaceholder('Contraseña').fill('mostrador123');
+  await counterPage.getByRole('button', { name: /ingresar/i }).click();
+  await snapshotTaken;
+
+  await clientPage.goto(await clientUrl(48));
+  const llamarMozoBtn = clientPage.getByRole('button', { name: /mozo/i });
+  await expect(llamarMozoBtn).toBeVisible({ timeout: 15000 });
+  await llamarMozoBtn.click();
+  await expect(counterPage.getByText('Mesa 48 pidió asistencia').first()).toBeVisible({ timeout: 10000 });
+
+  release();
+  await counterPage.waitForTimeout(1000);
+  const atendidaBtn = counterPage.locator('.assistance-row', { has: counterPage.getByText('Mesa 48', { exact: true }) })
+    .getByRole('button', { name: /atendida/i });
+  await expect(atendidaBtn).toBeVisible();
+  await atendidaBtn.click();
+  await expect(llamarMozoBtn).toBeEnabled({ timeout: 10000 });
 });
