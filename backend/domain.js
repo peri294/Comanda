@@ -254,6 +254,26 @@ export const closeOrders = (orders, tableId, closedAt) => {
   return closed;
 };
 
+// Privacidad de las notas del cliente (Decisión 17, cierra I-04): el texto libre ("sin
+// azúcar", alergias...) solo hace falta mientras el pedido está en curso. Cuando está
+// cobrado (archivado sin ser cancelación) y entregado a la vez, se vacía y queda así en
+// SQLite; el pedido, los items y los montos se conservan para la caja y el historial.
+// Hoy close-table da por entregado todo lo que cobra, pero se chequean los dos estados
+// por separado para que siga valiendo si algún día se puede cobrar antes de entregar.
+export const isOrderPaid = (order) => Boolean(order?.archived) && order.status !== 'cancelado';
+export const isOrderDelivered = (order) => order?.status === 'entregado';
+export const shouldClearOrderNotes = (order) =>
+  isOrderPaid(order) && isOrderDelivered(order) && typeof order.notes === 'string' && order.notes !== '';
+
+// Vacía las notas si corresponde (mutando el pedido, como closeOrders) y devuelve si
+// cambió algo, para persistir solo lo necesario. Las notas se modelan como '' (la
+// columna es NOT NULL DEFAULT ''), no como null.
+export const clearSettledOrderNotes = (order) => {
+  if (!shouldClearOrderNotes(order)) return false;
+  order.notes = '';
+  return true;
+};
+
 // Cocina no necesita ver pedidos ya entregados ni cancelados por el mostrador.
 export const isKitchenVisible = (o) => o.status !== 'entregado' && o.status !== 'cancelado';
 
