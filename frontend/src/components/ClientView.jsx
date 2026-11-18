@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Coffee, ShoppingBag, X, Plus, Minus, CreditCard,
@@ -58,6 +58,8 @@ export default function ClientView({ tableId, qrToken, socket }) {
   const [activeCategory, setActiveCategory] = useState('todos');
   const categories = useCategories(socket);
   const [cart, setCart] = useState([]);
+  const cartRef = useRef(cart);
+  useEffect(() => { cartRef.current = cart; }, [cart]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [notes, setNotes] = useState('');
   const [sendingOrder, setSendingOrder] = useState(false);
@@ -111,21 +113,37 @@ export default function ClientView({ tableId, qrToken, socket }) {
   const [codeInput, setCodeInput] = useState('');
   const [codeError, setCodeError] = useState('');
 
+  // ID de idempotencia del carrito actual (Decisión 14): si no hubo respuesta y se
+  // reintenta con el mismo carrito, viaja el mismo ID y el server no duplica el pedido.
+  // Se renueva cuando el server confirma o cuando cambia el carrito (ítems, cantidades o notas).
+  const clientOrderIdRef = useRef(null);
+  const renewClientOrderId = useCallback(() => {
+    clientOrderIdRef.current = crypto.randomUUID();
+  }, []);
+
   // Sincroniza catálogo y carrito con un menú nuevo (del fetch inicial, de un
   // menu-updated en vivo o del re-fetch tras reconectar): los items borrados o
   // agotados se sacan del carrito y los precios editados se actualizan, para no
   // dejar que el cliente envíe items que el backend va a rechazar en silencio.
-  const applyMenu = (newMenu) => {
+  const applyMenu = useCallback((newMenu) => {
     setMenu(newMenu);
-    setCart(prevCart => prevCart
+    const currentCart = cartRef.current;
+    if (currentCart.length === 0) return;
+
+    const nextCart = currentCart
       .map(cartItem => {
         const current = newMenu.find(m => m.id === cartItem.id);
         if (!current || !current.available) return null;
         return { ...cartItem, name: current.name, price: current.price };
       })
-      .filter(Boolean)
-    );
-  };
+      .filter(Boolean);
+
+    if (nextCart.length !== currentCart.length) {
+      renewClientOrderId();
+    }
+    cartRef.current = nextCart;
+    setCart(nextCart);
+  }, [renewClientOrderId]);
 
   // Fetch del menú, también tras cada reconexión del socket: el re-join ya re-hidrata
   // mesa y pedidos (el server los re-emite), pero un menu-updated emitido mientras
@@ -143,7 +161,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
     if (!socket) return;
     socket.on('connect', fetchMenu);
     return () => socket.off('connect', fetchMenu);
-  }, [socket]);
+  }, [socket, applyMenu]);
 
   // El token del QR viaja en el join: el server ata esta conexión a la mesa solo si es válido.
   // Con la visita terminada no se vuelve a unir, ni siquiera al reconectar el socket: si
@@ -169,6 +187,8 @@ export default function ClientView({ tableId, qrToken, socket }) {
     });
 
     const clearVisit = () => {
+      renewClientOrderId();
+      cartRef.current = [];
       setCart([]);
       setOrders({});
       setNotes('');
@@ -241,7 +261,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
       socket.off('assistance-ack');
       socket.off('menu-updated');
     };
-  }, [socket, tableId, qrToken]);
+  }, [socket, tableId, qrToken, applyMenu, renewClientOrderId]);
 
   const submitCode = (e) => {
     e.preventDefault();
@@ -269,6 +289,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
 
   // Add item to cart
   const addToCart = (product) => {
+    renewClientOrderId();
     setCart(prevCart => {
       const existing = prevCart.find(item => item.id === product.id);
       if (existing) {
@@ -283,6 +304,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
 
   // Modify quantity
   const updateQuantity = (productId, amount) => {
+    renewClientOrderId();
     setCart(prevCart => {
       return prevCart.map(item => {
         if (item.id === productId) {
@@ -326,11 +348,15 @@ export default function ClientView({ tableId, qrToken, socket }) {
       return;
     }
 
+    if (!clientOrderIdRef.current) renewClientOrderId();
+    const clientOrderId = clientOrderIdRef.current;
+
     setSendingOrder(true);
     setOrderError('');
     socket.timeout(8000).emit('new-order', {
       items: cart.map(item => ({ productId: item.id, quantity: item.quantity })),
-      notes
+      notes,
+      clientOrderId
     }, (err, res) => {
       setSendingOrder(false);
       if (err) {
@@ -342,6 +368,8 @@ export default function ClientView({ tableId, qrToken, socket }) {
         setOrderError(ORDER_ERRORS[res?.error] || 'No se pudo enviar el pedido. Probá de nuevo.');
         return;
       }
+      renewClientOrderId();
+      cartRef.current = [];
       setCart([]);
       setNotes('');
       setIsCartOpen(false);
@@ -694,7 +722,7 @@ export default function ClientView({ tableId, qrToken, socket }) {
               </label>
               <textarea
                 value={notes}
-                onChange={(e) => setNotes(e.target.value)}
+                onChange={(e) => { renewClientOrderId(); setNotes(e.target.value); }}
                 maxLength={MAX_NOTES_LENGTH}
                 placeholder="Ej. café sin azúcar, medialuna bien caliente..."
                 style={{

@@ -122,6 +122,8 @@ addColumnIfMissing('tables', 'block_on_close', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('menu', 'image_id', 'TEXT');
 // Mesas de una base anterior al código de visita: server.js les genera uno al arrancar.
 addColumnIfMissing('tables', 'visit_code', 'TEXT');
+// ID de idempotencia del carrito que manda el cliente en new-order (Decisión 14).
+addColumnIfMissing('orders', 'client_order_id', 'TEXT');
 // Los reportes y la caja filtran los pedidos cobrados por momento del cobro.
 db.exec('CREATE INDEX IF NOT EXISTS idx_orders_closed_at ON orders(closed_at)');
 
@@ -142,14 +144,15 @@ const upsertTableStmt = db.prepare(`
 `);
 
 const upsertOrderStmt = db.prepare(`
-  INSERT INTO orders (id, table_id, items, notes, status, archived, created_at, closed_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO orders (id, table_id, items, notes, status, archived, created_at, closed_at, client_order_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     items = excluded.items,
     notes = excluded.notes,
     status = excluded.status,
     archived = excluded.archived,
-    closed_at = excluded.closed_at
+    closed_at = excluded.closed_at,
+    client_order_id = excluded.client_order_id
 `);
 
 const upsertAssistanceStmt = db.prepare(`
@@ -217,6 +220,7 @@ const rowToMenuItem = (row) => ({
 const rowToOrder = (row) => ({
   id: row.id,
   tableId: row.table_id,
+  clientOrderId: row.client_order_id,
   items: JSON.parse(row.items),
   notes: row.notes,
   status: row.status,
@@ -254,7 +258,8 @@ export const persistOrder = (order) => {
     order.status,
     order.archived ? 1 : 0,
     order.createdAt,
-    order.closedAt || null
+    order.closedAt || null,
+    order.clientOrderId || null
   );
 };
 

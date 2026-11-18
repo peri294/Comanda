@@ -20,6 +20,7 @@ export const KITCHEN_FLOW = ['pendiente', 'en_preparacion', 'listo', 'entregado'
 export const PAYMENT_METHODS = ['efectivo', 'tarjeta'];
 
 export const MAX_NOTES_LENGTH = 300;
+export const MAX_CLIENT_ORDER_ID_LENGTH = 64;
 
 // Topes de lo que el server acepta. Los pedidos y el menú se difunden a todas las
 // pantallas y se guardan para siempre: sin topes, un solo mensaje con miles de items o
@@ -192,6 +193,22 @@ export const sanitizeItems = (rawItems, menu, previousItems = []) => {
 // llegara, y un objeto en notes tiraba abajo el render de Cocina y Mostrador (React no
 // renderiza objetos), incluso tras recargar, porque el pedido quedaba persistido.
 export const sanitizeNotes = (notes) => (typeof notes === 'string' ? notes.trim().slice(0, MAX_NOTES_LENGTH) : '');
+
+// ID de idempotencia que manda el cliente por carrito (Decisión 14): si viene inválido o
+// falta se ignora (null) y el pedido se procesa igual, por compatibilidad.
+export const sanitizeClientOrderId = (clientOrderId) => {
+  if (typeof clientOrderId !== 'string') return null;
+  const clean = clientOrderId.trim();
+  return clean.length > 0 && clean.length <= MAX_CLIENT_ORDER_ID_LENGTH ? clean : null;
+};
+
+// Si la misma mesa ya usó este clientOrderId en un pedido activo de la visita actual
+// (todavía no archivado), devuelve ese pedido para responder con su id sin crear otro.
+export const findDuplicateOrder = (orders, tableId, clientOrderId) => {
+  const cleanId = sanitizeClientOrderId(clientOrderId);
+  if (!cleanId) return null;
+  return orders.find(o => o.tableId === tableId && !o.archived && o.clientOrderId === cleanId) || null;
+};
 
 // Suma un pedido nuevo a la mesa. Si la mesa ya había pedido la cuenta, pedir algo más
 // la cancela: el consumo sigue sumando y la cuenta se vuelve a pedir cuando terminen

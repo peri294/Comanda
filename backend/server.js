@@ -44,6 +44,8 @@ import {
   closedTable,
   sanitizeItems,
   sanitizeNotes,
+  sanitizeClientOrderId,
+  findDuplicateOrder,
   sanitizeMenuFields,
   registerNewOrder,
   canAdvanceKitchenStatus,
@@ -916,6 +918,11 @@ io.on('connection', (socket) => {
     if (!table.enabled) return reply({ ok: false, error: 'table_disabled' });
     const tableId = table.id;
 
+    // Reintento del mismo carrito en la visita actual (Decisión 14): si se perdió el ack
+    // del primer envío, se devuelve el pedido ya creado sin duplicarlo ni contar para el freno.
+    const duplicate = findDuplicateOrder(orders, tableId, orderData?.clientOrderId);
+    if (duplicate) return reply({ ok: true, orderId: duplicate.id });
+
     const items = sanitizeItems(orderData?.items, menuCache);
     // Nada válido para pedir (menú manipulado, cantidades inválidas, todo agotado, etc.)
     if (items.length === 0) return reply({ ok: false, error: 'no_valid_items' });
@@ -927,6 +934,7 @@ io.on('connection', (socket) => {
     const newOrder = {
       id: `ord-${crypto.randomUUID()}`,
       tableId,
+      clientOrderId: sanitizeClientOrderId(orderData?.clientOrderId),
       items,
       notes: sanitizeNotes(orderData?.notes),
       status: 'pendiente',
