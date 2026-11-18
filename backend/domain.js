@@ -512,3 +512,50 @@ export const checkDemoModeEnv = (env = {}) => {
   }
   return null;
 };
+
+// Valida el header Origin del handshake WebSocket fuera de DEV_MODE.
+// Sin Origin (clientes no navegador, tests) se permite porque la restricción de Origin
+// es una defensa de navegador. Con Origin, debe ser http/https y coincidir con el host
+// propio de la request o estar en la lista de orígenes permitidos.
+export const isAllowedSocketOrigin = (origin, host, allowedOrigins = []) => {
+  if (origin === undefined || origin === null || origin === '') return true;
+  if (typeof origin !== 'string') return false;
+
+  let parsedOrigin;
+  try {
+    parsedOrigin = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsedOrigin.protocol !== 'http:' && parsedOrigin.protocol !== 'https:') return false;
+
+  if (typeof host === 'string') {
+    const cleanHost = host.trim();
+    if (cleanHost && !cleanHost.includes('/') && !cleanHost.includes('@')) {
+      try {
+        const parsedHost = new URL(`${parsedOrigin.protocol}//${cleanHost}`);
+        if (parsedHost.host === parsedOrigin.host) return true;
+      } catch {
+        // host inválido: no coincide, sigue con allowedOrigins
+      }
+    }
+  }
+
+  const list = typeof allowedOrigins === 'string'
+    ? allowedOrigins.split(',').map((s) => s.trim()).filter(Boolean)
+    : Array.isArray(allowedOrigins)
+      ? allowedOrigins
+      : [];
+
+  for (const entry of list) {
+    if (typeof entry !== 'string') continue;
+    try {
+      const parsedAllowed = new URL(entry.trim());
+      if (parsedAllowed.origin === parsedOrigin.origin) return true;
+    } catch {
+      // entrada malformada o '*' ignorada
+    }
+  }
+
+  return false;
+};
