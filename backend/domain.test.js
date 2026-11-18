@@ -31,6 +31,9 @@ import {
   MAX_BUSINESS_NAME_LENGTH,
   sanitizeItems,
   sanitizeNotes,
+  sanitizeClientOrderId,
+  findDuplicateOrder,
+  MAX_CLIENT_ORDER_ID_LENGTH,
   sanitizeMenuFields,
   sanitizeCategoryFields,
   canDeleteCategory,
@@ -101,6 +104,38 @@ describe('sanitizeNotes', () => {
     assert.equal(sanitizeNotes(undefined), '');
     assert.equal(sanitizeNotes('  sin azúcar  '), 'sin azúcar');
     assert.equal(sanitizeNotes('a'.repeat(5000)).length, MAX_NOTES_LENGTH);
+  });
+});
+
+describe('idempotencia de pedidos (clientOrderId)', () => {
+  test('sanitizeClientOrderId acepta strings dentro del tope y descarta inválidos', () => {
+    assert.equal(sanitizeClientOrderId('  abc-123  '), 'abc-123');
+    assert.equal(sanitizeClientOrderId('x'.repeat(MAX_CLIENT_ORDER_ID_LENGTH)), 'x'.repeat(MAX_CLIENT_ORDER_ID_LENGTH));
+    assert.equal(sanitizeClientOrderId('x'.repeat(MAX_CLIENT_ORDER_ID_LENGTH + 1)), null);
+    assert.equal(sanitizeClientOrderId('   '), null);
+    assert.equal(sanitizeClientOrderId(12345), null);
+    assert.equal(sanitizeClientOrderId(null), null);
+    assert.equal(sanitizeClientOrderId(undefined), null);
+  });
+
+  test('findDuplicateOrder detecta el mismo clientOrderId solo en pedidos activos de la misma mesa', () => {
+    const active = { ...order('ord-1'), tableId: '1', clientOrderId: 'cid-1' };
+    const otherTable = { ...order('ord-2'), tableId: '2', clientOrderId: 'cid-2' };
+    const archived = { ...order('ord-3'), tableId: '1', clientOrderId: 'cid-viejo', archived: true };
+    const withoutCid = { ...order('ord-4'), tableId: '1', clientOrderId: null };
+    const all = [active, otherTable, archived, withoutCid];
+
+    assert.equal(findDuplicateOrder(all, '1', 'cid-1'), active);
+    assert.equal(findDuplicateOrder(all, '1', '  cid-1  '), active);
+    assert.equal(findDuplicateOrder(all, '1', 'cid-nuevo'), null);
+    // El mismo ID en otra mesa o en una visita ya archivada no bloquea el pedido
+    assert.equal(findDuplicateOrder(all, '1', 'cid-2'), null);
+    assert.equal(findDuplicateOrder(all, '1', 'cid-viejo'), null);
+    // Sin clientOrderId (o inválido) nunca coincide con otro pedido sin clientOrderId
+    assert.equal(findDuplicateOrder(all, '1', undefined), null);
+    assert.equal(findDuplicateOrder(all, '1', null), null);
+    assert.equal(findDuplicateOrder(all, '1', ''), null);
+    assert.equal(findDuplicateOrder(all, '1', 'x'.repeat(MAX_CLIENT_ORDER_ID_LENGTH + 1)), null);
   });
 });
 
