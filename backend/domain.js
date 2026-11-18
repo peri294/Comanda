@@ -497,3 +497,18 @@ export const buildProductImagePrompt = ({ name, description, categoryName } = {}
   ];
   return parts.filter(Boolean).join(' ');
 };
+
+// --- ENTORNO ---
+
+// DEMO_MODE=1 expone las contraseñas en /api/config: si alguien lo deja prendido en
+// un local real con sus propias contraseñas, las estaría publicando. Por eso se
+// rechaza arrancar con DEMO_MODE=1 y KITCHEN_PASSWORD o COUNTER_PASSWORD definidas.
+export const checkDemoModeEnv = (env = {}) => {
+  if (!env || env.DEMO_MODE !== '1') return null;
+  const hasKitchen = typeof env.KITCHEN_PASSWORD === 'string' && env.KITCHEN_PASSWORD.length > 0;
+  const hasCounter = typeof env.COUNTER_PASSWORD === 'string' && env.COUNTER_PASSWORD.length > 0;
+  if (hasKitchen || hasCounter) {
+    return 'DEMO_MODE=1 publica las contraseñas del personal en el portal: no lo uses con KITCHEN_PASSWORD o COUNTER_PASSWORD definidas. Quitá DEMO_MODE o sacá esas contraseñas.';
+  }
+  return null;
+};

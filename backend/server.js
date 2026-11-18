@@ -71,7 +71,8 @@ import {
   MAX_CATEGORIES,
   MAX_PRODUCT_NAME_LENGTH,
   MAX_PRODUCT_DESCRIPTION_LENGTH,
-  buildProductImagePrompt
+  buildProductImagePrompt,
+  checkDemoModeEnv
 } from './domain.js';
 import { passwordMatches, createSessionStore, createLoginThrottle, throttleKeyForIp } from './auth.js';
 import { generateProductImage, resolveProvider, ImageAIError } from './imageAI.js';
@@ -101,6 +102,22 @@ const publicSettings = () => {
 };
 
 // --- AUTENTICACION DE PERSONAL ---
+
+const demoEnvError = checkDemoModeEnv(process.env);
+if (demoEnvError) {
+  console.error(demoEnvError);
+  process.exit(1);
+}
+if (DEMO_MODE) {
+  console.warn([
+    '============================================================',
+    'ATENCIÓN: MODO DEMO ACTIVO (DEMO_MODE=1)',
+    '- Las credenciales del personal y los links de mesas son públicos.',
+    '- El estado (mesas, pedidos, menú) se resetea tras inactividad.',
+    '- No uses DEMO_MODE=1 en un local real.',
+    '============================================================'
+  ].join('\n'));
+}
 
 const MIN_PASSWORD_LENGTH = 12;
 // Password compartida por rol (cocina/mostrador), pensada para una tablet compartida
