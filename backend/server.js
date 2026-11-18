@@ -31,6 +31,7 @@ import {
   deleteImage,
   deleteUnusedImages,
   getSalesReportData,
+  loadArchivedOrdersWithNotes,
   backupTo
 } from './db.js';
 import {
@@ -54,6 +55,7 @@ import {
   requestBill,
   assistanceDecision,
   closeOrders,
+  clearSettledOrderNotes,
   sanitizeSettings,
   newCategoryId,
   sanitizeCategoryFields,
@@ -389,6 +391,11 @@ tables.filter(t => !t.qrToken || !t.visitCode).forEach(t => {
   persistTable(t);
 });
 let orders = persistedState.orders;
+// Notas de pedidos ya cobrados y entregados que quedaron en la base de antes del borrado
+// de notas (Decisión 17): se limpian una vez al arrancar. Los activos en memoria no
+// están cobrados, pero se pasan igual por el dominio para no depender de eso.
+const settledWithNotes = [...orders, ...loadArchivedOrdersWithNotes()].filter(clearSettledOrderNotes);
+if (settledWithNotes.length > 0) runInTransaction(() => settledWithNotes.forEach(persistOrder));
 let menuCache = persistedState.menu;
 let categoriesCache = persistedState.categories;
 // Fotos subidas que nunca se asignaron a un producto ni al logo.
@@ -985,6 +992,10 @@ io.on('connection', (socket) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || !canAdvanceKitchenStatus(order, status)) return;
     order.status = status;
+    // Si el pedido ya quedó cobrado y entregado, la nota se borra antes de persistir y
+    // emitir (Decisión 17). Hoy un pedido cobrado no vuelve a pasar por acá
+    // (canAdvanceKitchenStatus rechaza archivados), pero la regla vale en cualquier orden.
+    clearSettledOrderNotes(order);
 
     // La mesa pasa a 'comiendo' recién cuando TODOS sus pedidos activos están entregados
     const table = findTable(order.tableId);
@@ -1200,6 +1211,9 @@ io.on('connection', (socket) => {
     const stillInKitchen = activeOrdersOf(tableId).filter(isKitchenVisible);
     // Solo los pedidos activos de la visita (ver closeOrders).
     const closedOrders = closeOrders(orders, tableId, new Date().toISOString());
+    // Cobrados y entregados: la nota del cliente se borra antes de persistir y de avisar a
+    // cocina (Decisión 17), así ni la base ni el order-modified la conservan.
+    closedOrders.forEach(clearSettledOrderNotes);
     previousVisitCodes.set(tableId, tables[tableIndex].visitCode);
     tables[tableIndex] = closedTable(tables[tableIndex]);
     activeAssistanceRequests.delete(tableId);

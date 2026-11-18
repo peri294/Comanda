@@ -363,6 +363,12 @@ export const loadState = (initialTables, defaultMenu, defaultCategories) => {
   };
 };
 
+// Pedidos archivados que todavía guardan notas: los que se cobraron antes de que existiera
+// el borrado de notas (Decisión 17). loadState no los trae, así que el arranque los lee
+// aparte para que el dominio decida cuáles limpiar.
+export const loadArchivedOrdersWithNotes = () =>
+  db.prepare("SELECT * FROM orders WHERE archived = 1 AND notes <> '' ORDER BY rowid").all().map(rowToOrder);
+
 // Ventas cobradas después de un instante dado. Se filtra por closed_at (momento del
 // cobro, no de la creación del pedido: una mesa que pidió a las 23:50 y pagó a las
 // 00:10 cuenta para la caja en que entró la plata; comparar ISO strings funciona
