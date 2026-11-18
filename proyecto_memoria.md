@@ -25,12 +25,13 @@ El sistema utiliza una arquitectura cliente-servidor con comunicación bidirecci
 ### Organización del backend
 * **`domain.js`**: reglas de negocio (estado de mesas y pedidos, validación de payloads, habilitación, cobro, llamados al mozo) como funciones sin estado global ni dependencias de sockets o SQLite. Reciben por argumento lo que necesitan (la mesa, sus pedidos activos, el menú) y tienen unit tests en `domain.test.js`.
 * **`server.js`**: transporte. Express y Socket.io, autenticación, estado en memoria (`tables`, `orders`, `menuCache`), y por cada evento: buscar el estado, llamar al dominio, persistir y emitir.
-* **`auth.js`**: sesiones de personal (revocables, sin vencimiento automático; ver Decisión 9), freno de intentos de login y comparación de contraseñas en tiempo constante (unit tests en `auth.test.js`).
+* **`auth.js`**: sesiones de personal (revocables, sin vencimiento automático; ver Decisión 9), freno de intentos de login y comparación en tiempo constante (`safeEqual`) de contraseñas y token QR (Decisión 16; unit tests en `auth.test.js`).
 * **`db.js`**: persistencia SQLite (esquema, migraciones, prepared statements).
+* **`imageAI.js`**: generación de imágenes de productos con IA (Cloudflare Workers AI, Google Gemini o `fake` en `DEV_MODE=1`; unit tests en `imageAI.test.js`).
 
 ### Tecnologías Utilizadas
 * **Backend**: Node.js, Express, Socket.io.
-* **Frontend**: React (Vite), Vanilla CSS (Modo oscuro y temas cálidos/glassmorphism), Lucide Icons.
+* **Frontend**: React (Vite), Vanilla CSS (paleta clara "café con leche": fondos crema, tarjetas blancas y acentos terracota y salvia), Lucide Icons.
 * **Comunicación**: HTTP (para carga inicial del menú) y WebSockets (para actualizaciones de pedidos y mesas en tiempo real).
 
 ---
@@ -42,11 +43,12 @@ Cada mesa tiene un estado que determina qué puede hacer el cliente y qué se mu
 ```typescript
 interface Table {
   id: string; // Número de mesa (e.g., "1", "2")
-  status: 'libre' | 'pedido_pendiente' | 'comiendo' | 'esperando_cuenta' | 'pagando_tarjeta' | 'cuenta_cerrada';
+  status: 'libre' | 'pedido_pendiente' | 'comiendo' | 'esperando_cuenta' | 'pagando_tarjeta';
   currentOrderId: string | null;
   paymentMethod: 'efectivo' | 'tarjeta' | null;
   total: number;
   qrToken: string; // Secreto del QR de la mesa (Decisión 6). Solo lo reciben el mostrador y la propia mesa.
+  visitCode: string; // Código de 4 dígitos de la visita actual (Decisión 12).
   enabled: boolean; // Habilitada para pedir (Decisión 7). Una mesa bloqueada siempre está vacía.
   blockOnClose: boolean; // Bloqueo pedido con clientes sentados: se aplica al cobrarla.
 }
@@ -69,6 +71,7 @@ interface Order {
   status: 'pendiente' | 'en_preparacion' | 'listo' | 'entregado' | 'cancelado';
   archived: boolean; // true cuando la mesa se cobró (close-table) o el mostrador canceló el pedido
   createdAt: string; // ISO String
+  closedAt?: string; // ISO String; se setea al cerrar la mesa (closeOrders)
   notes?: string; // '' si no hay; se vacía al quedar cobrado y entregado (Decisión 17)
 }
 ```
@@ -242,6 +245,11 @@ Para iniciar la aplicación en tu entorno local:
   - `db.js` agrega la columna `orders.client_order_id` con `addColumnIfMissing` y la incluye en `persistOrder` y `rowToOrder`, así `reloadFromDb` y el arranque conservan el ID.
   - Tests: unit tests de `sanitizeClientOrderId` y `findDuplicateOrder` en `backend/domain.test.js`, y nuevo spec E2E `tests/order-idempotency.spec.js` (mesa 48). Se corrigió además el README y se marcó I-06 como Resuelto en `SECURITY_REVIEW.md`.
   - **Errores a evitar**: no renovar el `clientOrderId` cuando `applyMenu` refresca el menú al reconectar sin que hayan cambiado los ítems del carrito (si se renovara en cada reconexión, el reintento tras un corte perdería el ID original); y no comparar `clientOrderId` cuando viene vacío o inválido (`null`), porque dos pedidos sin `clientOrderId` coincidirían entre sí.
+* **Categorías editables desde el Mostrador**:
+  - Las categorías del menú pasan a ser administrables desde el Mostrador (tabla `categories` en SQLite) con topes en `domain.js`: `MAX_CATEGORIES=50`, `MAX_CATEGORY_NAME_LENGTH=40` y `MAX_CATEGORY_ICON_LENGTH=8`.
+* **Bloqueo de `DEMO_MODE=1` con contraseñas propias (Decisión 15, cierra I-05)**:
+  - `domain.js` exporta `checkDemoModeEnv(env)` y `server.js` corta el arranque con `process.exit(1)` si `DEMO_MODE=1` convive con `KITCHEN_PASSWORD` o `COUNTER_PASSWORD` definidas.
+  - Cuando `DEMO_MODE=1` corre sin contraseñas propias, `server.js` imprime un banner de advertencia visible.
 * **2026-11-18 — Comparación en tiempo constante del token QR de mesa (Decisión 16, cierra I-02)**:
   - `auth.js` exporta `safeEqual(a, b)` (compara hashes SHA-256 con `crypto.timingSafeEqual` y devuelve `false` si alguno no es string); `passwordMatches` pasa a delegar en ella.
   - `server.js` reemplaza las comparaciones directas de `table.qrToken` en `getSocketTable` y en el handler `join` por `safeEqual`, manteniendo el chequeo de `visitCode` y `typeof`.
@@ -255,3 +263,5 @@ Para iniciar la aplicación en tu entorno local:
   - `domain.js` exporta `isAllowedSocketOrigin(origin, host, allowedOrigins)` (acepta sin `Origin`, mismo host HTTP/HTTPS o en lista de `CORS_ORIGIN`; rechaza otros orígenes, puertos distintos o `Origin` malformado).
   - `server.js` aplica `allowRequest` en Socket.IO fuera de `DEV_MODE=1` (incluyendo `DEMO_MODE=1`), leyendo `X-Forwarded-Host` cuando `TRUST_PROXY` está definido y reutilizando `CORS_ORIGIN` (soporta lista separada por comas).
   - Unit tests agregados en `backend/domain.test.js` (84/84 tests en verde) y documentación de `CORS_ORIGIN` actualizada en `README.md`.
+* **2026-11-18 — Actualización de documentación**:
+  - Se actualizaron `README.md`, `docs/INSTALACION.md` y `proyecto_memoria.md` para alinearlos con el estado actual del código (conteo de tests, paleta clara, `imageAI.js`, `TRUST_PROXY`, validaciones de arranque, `DEMO_MODE=1`, modelos `Table`/`Order` y entradas faltantes del changelog).

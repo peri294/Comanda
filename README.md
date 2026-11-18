@@ -45,7 +45,7 @@ En una cafetería, el pedido pasa de boca en boca: mesa → mozo → cocina → 
 - **Listo para un local real:** nombre y logo configurables, pantalla de inicio solo para el personal en producción, copia de seguridad descargable y [guía de instalación](docs/INSTALACION.md).
 - **Ciclo del día:** las mesas arrancan bloqueadas; "Iniciar Día" las habilita y "Cerrar Día" las bloquea, respetando las que todavía tienen clientes (se bloquean al cobrarlas).
 - **Audio sintetizado con Web Audio API** para las alertas de cocina y mostrador, sin archivos externos.
-- **UI glassmorphism con modo oscuro**, pensada para celular (cliente) y tablet (cocina/mostrador).
+- **UI clara con paleta "café con leche"** (fondos crema, tarjetas blancas y acentos terracota y salvia), pensada para celular (cliente) y tablet (cocina/mostrador).
 
 ##  Seguridad
 
@@ -102,6 +102,7 @@ backend/
   domain.js       Reglas de negocio (mesas, pedidos, validaciones)
   auth.js         Sesiones de personal y freno de intentos de login
   db.js           Esquema SQLite, migraciones y queries
+  imageAI.js      Generación de imágenes con IA (Cloudflare, Gemini o fake)
   *.test.js       Unit tests
 frontend/src/
   components/     ClientView, KitchenView, CounterView y sus modales (menú, reportes,
@@ -132,9 +133,12 @@ cd frontend && npm install && npm run dev
 ##  Tests
 
 ```bash
-npm run test:unit        # 71 unit tests del dominio y las sesiones (node:test)
-npx playwright test      # 40 tests E2E (requiere backend y frontend corriendo en dev)
+npm run test:unit             # 90 tests unitarios (auth, dominio e imageAI) con node:test
+npm run lint --prefix frontend
+npx playwright test           # 41 tests E2E (requiere backend y frontend corriendo en dev)
 ```
+
+Antes de correr los E2E por primera vez, ejecutá `npm install` en la raíz y `npx playwright install`. El spec `tests/image-ai.spec.js` se saltea si el backend no corre con `IMAGE_AI_PROVIDER=fake` (como en [`.github/workflows/ci.yml`](.github/workflows/ci.yml)). `npm run dev` del backend carga `.env.development` y `.env.local` (si existe).
 
 Los E2E cubren los flujos completos (pedido → cocina → cobro → reportes), la reconexión con pedidos en vuelo, el ciclo del día, el menú con fotos y la seguridad del transporte (tokens y códigos de mesa, roles, validación de payloads). En cada push, [GitHub Actions](.github/workflows/ci.yml) corre los unit tests, el lint, el build y la suite E2E completa. Los E2E arrancan con `/api/test/reset`, que **borra la base**: para conservar tu estado local, levantá el backend con `DB_PATH` apuntando a otro archivo.
 
@@ -154,12 +158,14 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 | Variable | Uso |
 | --- | --- |
 | `KITCHEN_PASSWORD` / `COUNTER_PASSWORD` | Contraseñas del personal. Obligatorias salvo con `DEV_MODE=1` o `DEMO_MODE=1`. |
-| `TRUST_PROXY` | Cantidad de proxies delante del server (normalmente `1`), para que el freno de login vea la IP real. |
+| `TRUST_PROXY` | Cantidad de proxies delante del server (normalmente `1`), para que el freno de login vea la IP real y la validación de `Origin` del WebSocket use `X-Forwarded-Host`. |
 | `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica tras un rato sin uso. No arranca si `KITCHEN_PASSWORD` o `COUNTER_PASSWORD` están definidas (para no publicar claves reales). |
 | `DEMO_IDLE_MINUTES` | Minutos sin actividad antes de reiniciar la demo (por defecto 30). |
 | `DB_PATH` | Ruta del archivo SQLite (en un disco persistente). |
+| `PORT` | Puerto donde escucha el server (por defecto `3001`). |
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | Opcional: imágenes de productos con IA vía Cloudflare Workers AI (cuota diaria gratuita). |
-| `GEMINI_API_KEY` / `GEMINI_IMAGE_MODEL` | Opcional: imágenes de productos con IA vía Google Gemini (pago por imagen). Con ambos configurados, `IMAGE_AI_PROVIDER` elige. |
+| `GEMINI_API_KEY` / `GEMINI_IMAGE_MODEL` | Opcional: imágenes de productos con IA vía Google Gemini (pago por imagen). Con Cloudflare y Gemini configurados, `IMAGE_AI_PROVIDER` elige. |
+| `IMAGE_AI_PROVIDER` | Fija el proveedor de imágenes con IA: `cloudflare`, `gemini` o `fake` (solo con `DEV_MODE=1`). Si no se define, usa el que tenga credenciales. |
 | `TZ` | Zona horaria del local (por ejemplo `America/Argentina/Buenos_Aires`): define los días de la caja y los reportes. |
 | `CORS_ORIGIN` | Solo si el frontend se publica en otro dominio (junto con `VITE_BACKEND_URL` al compilarlo); acepta un origen o varios separados por comas, y habilita también el handshake WebSocket desde esos orígenes. |
 | `DEV_MODE=1` | Solo desarrollo (lo setea `npm run dev`): endpoints de test, contraseñas por defecto y CORS abierto. **Nunca en un despliegue.** |

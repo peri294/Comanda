@@ -35,10 +35,10 @@ Es la opción recomendada: no depende de una PC del local, tiene HTTPS incluido 
    | `KITCHEN_PASSWORD` | Contraseña de la cocina (larga: 12 caracteres o más) |
    | `COUNTER_PASSWORD` | Contraseña del mostrador (distinta de la de cocina) |
    | `DB_PATH` | `/var/data/comanda.db` (adentro del disco persistente) |
-   | `TRUST_PROXY` | `1` |
+   | `TRUST_PROXY` | `1` (para que el freno de login vea la IP real y la validación de `Origin` del WebSocket use el `Host` reenviado) |
    | `TZ` | La zona horaria del local, por ejemplo `America/Argentina/Buenos_Aires` |
 
-   **No** definir `DEMO_MODE` ni `DEV_MODE`: el primero publica las contraseñas en la pantalla de inicio y el segundo deja expuesto un endpoint que borra la base.
+   **No** definir `DEMO_MODE` ni `DEV_MODE`: el primero publica las contraseñas en la pantalla de inicio (y si `KITCHEN_PASSWORD` o `COUNTER_PASSWORD` están definidas, el servidor no arranca) y el segundo deja expuesto un endpoint que borra la base.
 
 5. Con el servicio en marcha, la dirección (`https://<nombre>.onrender.com`, o un dominio propio) es la que va en los QR.
 
@@ -67,7 +67,7 @@ Sirve si no se quiere depender de internet: todo pasa por el WiFi del local. Los
 5. La PC necesita una **IP fija en la red del local** (se configura en el router): esa dirección (`http://192.168.x.x:3001`) es la que va en los QR. Si la IP cambia, los QR impresos dejan de funcionar.
 6. La primera vez, Windows pide permiso de firewall para Node: hay que aceptarlo para las redes privadas.
 
-**HTTPS:** sin HTTPS, las contraseñas del personal viajan sin cifrar por el WiFi, y cualquiera conectado a la misma red podría verlas. Si el WiFi de los clientes es el mismo que el del personal, conviene poner un proxy con HTTPS delante del server (por ejemplo [Caddy](https://caddyserver.com/) con un dominio propio), o separar las redes: una para el personal y otra, aislada, para los clientes.
+**HTTPS:** sin HTTPS, las contraseñas del personal viajan sin cifrar por el WiFi, y cualquiera conectado a la misma red podría verlas. Si el WiFi de los clientes es el mismo que el del personal, conviene poner un proxy con HTTPS delante del server (por ejemplo [Caddy](https://caddyserver.com/) con un dominio propio), o separar las redes: una para el personal y otra, aislada, para los clientes. Detrás de un proxy propio hay que definir `TRUST_PROXY` (para que el freno de login vea la IP real y la validación de `Origin` del WebSocket use el `Host` reenviado) o `CORS_ORIGIN`.
 
 ---
 
@@ -155,10 +155,13 @@ La base se migra sola al arrancar: las columnas y tablas nuevas se agregan sin t
 | Síntoma | Causa probable |
 | --- | --- |
 | El server no arranca: "Faltan KITCHEN_PASSWORD y/o COUNTER_PASSWORD" | Faltan las variables de entorno de las contraseñas. |
+| El server no arranca: "KITCHEN_PASSWORD y COUNTER_PASSWORD tienen que tener al menos 12 caracteres." | Alguna de las dos contraseñas tiene menos de 12 caracteres. |
+| El server no arranca: "KITCHEN_PASSWORD y COUNTER_PASSWORD tienen que ser distintas." | Se definió la misma contraseña para cocina y mostrador. |
+| El server no arranca: "DEMO_MODE=1 publica las contraseñas del personal en el portal: no lo uses con KITCHEN_PASSWORD o COUNTER_PASSWORD definidas." | Se activó `DEMO_MODE=1` teniendo definidas `KITCHEN_PASSWORD` o `COUNTER_PASSWORD`. |
 | El QR abre en la PC pero no en los celulares | Se imprimió desde `localhost`, o la PC del server cambió de IP. Imprimir de nuevo desde la dirección definitiva. |
 | El cliente ve "Esta mesa no está disponible" | El QR es de una mesa dada de baja o se regeneró: imprimir el QR nuevo. |
 | El cliente ve "Mesa no habilitada" | Falta "Iniciar Día", o la mesa se bloqueó desde su tarjeta. |
-| "Demasiados intentos" al ingresar el código | Hubo 10 códigos incorrectos para esa mesa desde la misma conexión: esperar 15 minutos, o que el mozo verifique el código de la tarjeta. |
+| "Demasiados intentos" al ingresar el código | Hubo 10 códigos incorrectos para esa mesa desde la misma IP (IPv6 agrupada por `/64`): esperar 15 minutos, o que el mozo verifique el código de la tarjeta. |
 | Las ventas de un día aparecen en otro | La zona horaria del server no es la del local: definir `TZ`. |
 | Las pantallas del personal vuelven al login | El server se reinició, o alguien usó "Cerrar Otras Sesiones". |
 | "No hay un servicio de imágenes con IA configurado" | Faltan las variables de Cloudflare o Gemini (sección 6), o el server no se reinició después de agregarlas. |
