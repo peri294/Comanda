@@ -45,7 +45,8 @@ import {
   requestBill,
   assistanceDecision,
   ASSISTANCE_REOPEN_COOLDOWN_MS,
-  MAX_NOTES_LENGTH
+  MAX_NOTES_LENGTH,
+  checkDemoModeEnv
 } from './domain.js';
 
 const MENU = [
@@ -552,5 +553,28 @@ describe('buildProductImagePrompt', () => {
     const prompt = buildProductImagePrompt({ name: 'Espresso' });
     assert.doesNotMatch(prompt, /Description:|Menu category:/);
     assert.doesNotMatch(prompt, /\s{2}/);
+  });
+});
+
+describe('checkDemoModeEnv', () => {
+  test('rechaza DEMO_MODE=1 si hay KITCHEN_PASSWORD, COUNTER_PASSWORD o ambas', () => {
+    assert.ok(checkDemoModeEnv({ DEMO_MODE: '1', KITCHEN_PASSWORD: 'secreto-largo-123' }));
+    assert.ok(checkDemoModeEnv({ DEMO_MODE: '1', COUNTER_PASSWORD: 'secreto-largo-456' }));
+    assert.ok(checkDemoModeEnv({
+      DEMO_MODE: '1',
+      KITCHEN_PASSWORD: 'secreto-largo-123',
+      COUNTER_PASSWORD: 'secreto-largo-456'
+    }));
+  });
+
+  test('acepta DEMO_MODE=1 sin contraseñas o con contraseñas vacías', () => {
+    assert.equal(checkDemoModeEnv({ DEMO_MODE: '1' }), null);
+    assert.equal(checkDemoModeEnv({ DEMO_MODE: '1', KITCHEN_PASSWORD: '', COUNTER_PASSWORD: '' }), null);
+  });
+
+  test('sin DEMO_MODE=1 no da error aunque haya contraseñas', () => {
+    assert.equal(checkDemoModeEnv({}), null);
+    assert.equal(checkDemoModeEnv({ KITCHEN_PASSWORD: 'secreto-largo-123', COUNTER_PASSWORD: 'secreto-largo-456' }), null);
+    assert.equal(checkDemoModeEnv({ DEMO_MODE: '0', KITCHEN_PASSWORD: 'secreto-largo-123' }), null);
   });
 });
