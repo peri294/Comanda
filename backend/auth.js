@@ -2,15 +2,17 @@
 // sockets; el freno recibe el reloj (now) para probarlo sin esperas (ver auth.test.js).
 import crypto from 'node:crypto';
 
-// Compara contraseñas en tiempo constante: un !== corta en el primer carácter distinto,
+// Compara dos secretos en tiempo constante: un !== corta en el primer carácter distinto,
 // y el tiempo de respuesta filtraría cuántos caracteres del principio son correctos.
 // Se comparan hashes para que el largo distinto no corte antes (timingSafeEqual exige
 // buffers del mismo tamaño).
-export const passwordMatches = (input, expected) => {
-  if (typeof input !== 'string') return false;
+export const safeEqual = (a, b) => {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
   const hash = (s) => crypto.createHash('sha256').update(s).digest();
-  return crypto.timingSafeEqual(hash(input), hash(expected));
+  return crypto.timingSafeEqual(hash(a), hash(b));
 };
+
+export const passwordMatches = (input, expected) => safeEqual(input, expected);
 
 // Tokens de sesión por rol. No vencen solos: las tablets de cocina y mostrador quedan
 // logueadas mientras el local funciona, sin cortes en pleno servicio ni contraseñas

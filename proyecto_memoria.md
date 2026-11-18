@@ -238,3 +238,7 @@ Para iniciar la aplicación en tu entorno local:
   - `db.js` agrega la columna `orders.client_order_id` con `addColumnIfMissing` y la incluye en `persistOrder` y `rowToOrder`, así `reloadFromDb` y el arranque conservan el ID.
   - Tests: unit tests de `sanitizeClientOrderId` y `findDuplicateOrder` en `backend/domain.test.js`, y nuevo spec E2E `tests/order-idempotency.spec.js` (mesa 48). Se corrigió además el README y se marcó I-06 como Resuelto en `SECURITY_REVIEW.md`.
   - **Errores a evitar**: no renovar el `clientOrderId` cuando `applyMenu` refresca el menú al reconectar sin que hayan cambiado los ítems del carrito (si se renovara en cada reconexión, el reintento tras un corte perdería el ID original); y no comparar `clientOrderId` cuando viene vacío o inválido (`null`), porque dos pedidos sin `clientOrderId` coincidirían entre sí.
+* **2026-11-18 — Comparación en tiempo constante del token QR de mesa (Decisión 16, cierra I-02)**:
+  - `auth.js` exporta `safeEqual(a, b)` (compara hashes SHA-256 con `crypto.timingSafeEqual` y devuelve `false` si alguno no es string); `passwordMatches` pasa a delegar en ella.
+  - `server.js` reemplaza las comparaciones directas de `table.qrToken` en `getSocketTable` y en el handler `join` por `safeEqual`, manteniendo el chequeo de `visitCode` y `typeof`.
+  - Unit tests de `safeEqual` agregados en `backend/auth.test.js`.
