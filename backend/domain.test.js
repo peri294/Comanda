@@ -11,6 +11,10 @@ import {
   closedTable,
   isVisitCode,
   closeOrders,
+  isOrderPaid,
+  isOrderDelivered,
+  shouldClearOrderNotes,
+  clearSettledOrderNotes,
   sanitizeSettings,
   buildProductImagePrompt,
   orderRateDecision,
@@ -335,6 +339,62 @@ describe('closeOrders', () => {
     assert.equal(anterior.closedAt, '2026-10-08T20:00:00.000Z');
     assert.equal(cancelado.status, 'cancelado');
     assert.equal(otraMesa.archived, false);
+  });
+});
+
+describe('borrado de notas de pedidos cobrados y entregados (I-04)', () => {
+  const withNotes = (o, notes = 'sin azúcar') => ({ ...o, notes });
+
+  test('cobrado sin entregar conserva la nota', () => {
+    // Hoy close-table siempre marca entregado; se arma a mano para fijar la regla.
+    const cobrado = withNotes({ ...order('a', 'listo'), archived: true });
+    assert.equal(isOrderPaid(cobrado), true);
+    assert.equal(shouldClearOrderNotes(cobrado), false);
+    assert.equal(clearSettledOrderNotes(cobrado), false);
+    assert.equal(cobrado.notes, 'sin azúcar');
+  });
+
+  test('entregado sin cobrar conserva la nota', () => {
+    const entregado = withNotes(order('a', 'entregado'));
+    assert.equal(isOrderDelivered(entregado), true);
+    assert.equal(clearSettledOrderNotes(entregado), false);
+    assert.equal(entregado.notes, 'sin azúcar');
+  });
+
+  test('cobrado y entregado borra solo la nota', () => {
+    const pedido = withNotes({ ...order('a', 'entregado'), archived: true, closedAt: '2026-11-18T20:00:00.000Z' });
+    const items = structuredClone(pedido.items);
+    assert.equal(clearSettledOrderNotes(pedido), true);
+    assert.equal(pedido.notes, '');
+    assert.deepEqual(pedido.items, items);
+    assert.equal(pedido.status, 'entregado');
+    assert.equal(pedido.archived, true);
+    assert.equal(pedido.closedAt, '2026-11-18T20:00:00.000Z');
+  });
+
+  test('aplicado tras closeOrders borra la nota sin importar el estado previo de cocina', () => {
+    const enCocina = withNotes(order('a', 'en_preparacion'));
+    const yaEntregado = withNotes(order('b', 'entregado'));
+    closeOrders([enCocina, yaEntregado], '1', '2026-11-18T20:00:00.000Z').forEach(clearSettledOrderNotes);
+    assert.equal(enCocina.notes, '');
+    assert.equal(yaEntregado.notes, '');
+  });
+
+  test('un cancelado no cuenta como cobrado y conserva la nota', () => {
+    const cancelado = withNotes({ ...order('a', 'cancelado'), archived: true });
+    assert.equal(isOrderPaid(cancelado), false);
+    assert.equal(clearSettledOrderNotes(cancelado), false);
+    assert.equal(cancelado.notes, 'sin azúcar');
+  });
+
+  test('sin notas no rompe ni cambia nada', () => {
+    const sinCampo = { ...order('a', 'entregado'), archived: true };
+    const vacia = withNotes({ ...order('b', 'entregado'), archived: true }, '');
+    assert.equal(clearSettledOrderNotes(sinCampo), false);
+    assert.equal('notes' in sinCampo, false);
+    assert.equal(clearSettledOrderNotes(vacia), false);
+    assert.equal(vacia.notes, '');
+    assert.equal(shouldClearOrderNotes(null), false);
   });
 });
 
