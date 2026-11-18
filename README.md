@@ -155,7 +155,7 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 | --- | --- |
 | `KITCHEN_PASSWORD` / `COUNTER_PASSWORD` | Contraseñas del personal. Obligatorias salvo con `DEV_MODE=1` o `DEMO_MODE=1`. |
 | `TRUST_PROXY` | Cantidad de proxies delante del server (normalmente `1`), para que el freno de login vea la IP real. |
-| `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica tras un rato sin uso. |
+| `DEMO_MODE=1` | Demo pública: el portal muestra las mesas y las contraseñas, y el estado vuelve a fábrica tras un rato sin uso. No arranca si `KITCHEN_PASSWORD` o `COUNTER_PASSWORD` están definidas (para no publicar claves reales). |
 | `DEMO_IDLE_MINUTES` | Minutos sin actividad antes de reiniciar la demo (por defecto 30). |
 | `DB_PATH` | Ruta del archivo SQLite (en un disco persistente). |
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | Opcional: imágenes de productos con IA vía Cloudflare Workers AI (cuota diaria gratuita). |
