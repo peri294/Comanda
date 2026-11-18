@@ -50,7 +50,8 @@ import {
   assistanceDecision,
   ASSISTANCE_REOPEN_COOLDOWN_MS,
   MAX_NOTES_LENGTH,
-  checkDemoModeEnv
+  checkDemoModeEnv,
+  isAllowedSocketOrigin
 } from './domain.js';
 
 const MENU = [
@@ -636,5 +637,52 @@ describe('checkDemoModeEnv', () => {
     assert.equal(checkDemoModeEnv({}), null);
     assert.equal(checkDemoModeEnv({ KITCHEN_PASSWORD: 'secreto-largo-123', COUNTER_PASSWORD: 'secreto-largo-456' }), null);
     assert.equal(checkDemoModeEnv({ DEMO_MODE: '0', KITCHEN_PASSWORD: 'secreto-largo-123' }), null);
+  });
+});
+
+describe('isAllowedSocketOrigin', () => {
+  test('sin origin (clientes no navegador o tests) -> true', () => {
+    assert.equal(isAllowedSocketOrigin(undefined, 'comanda.onrender.com'), true);
+    assert.equal(isAllowedSocketOrigin(null, 'comanda.onrender.com'), true);
+    assert.equal(isAllowedSocketOrigin('', 'comanda.onrender.com'), true);
+  });
+
+  test('mismo host (http o https, con o sin puerto por defecto) -> true', () => {
+    assert.equal(isAllowedSocketOrigin('https://comanda.onrender.com', 'comanda.onrender.com'), true);
+    assert.equal(isAllowedSocketOrigin('http://localhost:3001', 'localhost:3001'), true);
+    assert.equal(isAllowedSocketOrigin('https://Comanda.OnRender.com', 'comanda.onrender.com:443'), true);
+  });
+
+  test('otro host -> false', () => {
+    assert.equal(isAllowedSocketOrigin('https://evil.com', 'comanda.onrender.com'), false);
+    assert.equal(isAllowedSocketOrigin('https://comanda.onrender.com.evil.com', 'comanda.onrender.com'), false);
+    assert.equal(isAllowedSocketOrigin('https://evil.com', undefined), false);
+  });
+
+  test('host con distinto puerto -> false', () => {
+    assert.equal(isAllowedSocketOrigin('http://localhost:5173', 'localhost:3001'), false);
+    assert.equal(isAllowedSocketOrigin('https://example.com:8443', 'example.com'), false);
+  });
+
+  test('origen en la lista permitida (array o string separado por comas) -> true', () => {
+    assert.equal(
+      isAllowedSocketOrigin('https://app.cafeteria.com', 'api.cafeteria.com', ['https://app.cafeteria.com']),
+      true
+    );
+    assert.equal(
+      isAllowedSocketOrigin('https://app.cafeteria.com', 'api.cafeteria.com', 'https://otro.com, https://app.cafeteria.com/'),
+      true
+    );
+    assert.equal(
+      isAllowedSocketOrigin('https://evil.com', 'api.cafeteria.com', ['https://app.cafeteria.com', '*']),
+      false
+    );
+  });
+
+  test('origin malformado o protocolo no http/https -> false', () => {
+    assert.equal(isAllowedSocketOrigin('not-a-url', 'comanda.onrender.com'), false);
+    assert.equal(isAllowedSocketOrigin('null', 'comanda.onrender.com'), false);
+    assert.equal(isAllowedSocketOrigin('file:///etc/passwd', 'comanda.onrender.com'), false);
+    assert.equal(isAllowedSocketOrigin(123, 'comanda.onrender.com'), false);
   });
 });

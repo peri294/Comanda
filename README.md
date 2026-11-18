@@ -161,7 +161,7 @@ npm start       # levanta el server (usa PORT si el hosting la define)
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | Opcional: imágenes de productos con IA vía Cloudflare Workers AI (cuota diaria gratuita). |
 | `GEMINI_API_KEY` / `GEMINI_IMAGE_MODEL` | Opcional: imágenes de productos con IA vía Google Gemini (pago por imagen). Con ambos configurados, `IMAGE_AI_PROVIDER` elige. |
 | `TZ` | Zona horaria del local (por ejemplo `America/Argentina/Buenos_Aires`): define los días de la caja y los reportes. |
-| `CORS_ORIGIN` | Solo si el frontend se publica en otro dominio (junto con `VITE_BACKEND_URL` al compilarlo). |
+| `CORS_ORIGIN` | Solo si el frontend se publica en otro dominio (junto con `VITE_BACKEND_URL` al compilarlo); acepta un origen o varios separados por comas, y habilita también el handshake WebSocket desde esos orígenes. |
 | `DEV_MODE=1` | Solo desarrollo (lo setea `npm run dev`): endpoints de test, contraseñas por defecto y CORS abierto. **Nunca en un despliegue.** |
 
 ##  Autor

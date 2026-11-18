@@ -68,6 +68,7 @@ import {
   buildSalesReport,
   newVisitCode,
   orderRateDecision,
+  isAllowedSocketOrigin,
   MAX_TABLES,
   MAX_MENU_ITEMS,
   MAX_CATEGORIES,
@@ -150,8 +151,12 @@ const ROLE_PASSWORDS = {
 
 // CORS: en desarrollo el frontend de Vite (:5173) le habla al backend (:3001) desde
 // cualquier IP de la red local. En producción el backend sirve el frontend en el mismo
-// origen y no hace falta; CORS_ORIGIN lo habilita si el frontend vive en otro dominio.
-const CORS_ORIGIN = process.env.CORS_ORIGIN || (DEV_MODE ? '*' : null);
+// origen y no hace falta; CORS_ORIGIN lo habilita si el frontend vive en otro dominio
+// (acepta un origen o una lista separada por comas).
+const rawCorsOrigin = process.env.CORS_ORIGIN;
+const CORS_ORIGIN = rawCorsOrigin
+  ? (rawCorsOrigin.includes(',') ? rawCorsOrigin.split(',').map((s) => s.trim()).filter(Boolean) : rawCorsOrigin.trim())
+  : (DEV_MODE ? '*' : null);
 
 const app = express();
 app.disable('x-powered-by');
@@ -249,6 +254,15 @@ const io = new Server(httpServer, {
     cors: {
       origin: CORS_ORIGIN,
       methods: ['GET', 'POST']
+    }
+  }),
+  // Fuera de DEV_MODE validamos el Origin del handshake WebSocket (CORS no frena WS).
+  // En DEMO_MODE también aplica porque Render sirve frontend y API desde el mismo host.
+  ...(!DEV_MODE && {
+    allowRequest: (req, callback) => {
+      const forwardedHost = process.env.TRUST_PROXY && req.headers['x-forwarded-host'];
+      const host = forwardedHost ? String(forwardedHost).split(',')[0].trim() : req.headers.host;
+      callback(null, isAllowedSocketOrigin(req.headers.origin, host, process.env.CORS_ORIGIN));
     }
   })
 });
