@@ -74,7 +74,7 @@ import {
   buildProductImagePrompt,
   checkDemoModeEnv
 } from './domain.js';
-import { passwordMatches, createSessionStore, createLoginThrottle, throttleKeyForIp } from './auth.js';
+import { passwordMatches, safeEqual, createSessionStore, createLoginThrottle, throttleKeyForIp } from './auth.js';
 import { generateProductImage, resolveProvider, ImageAIError } from './imageAI.js';
 
 // Seguro por defecto: lo que solo sirve para desarrollar (endpoints de test que borran
@@ -451,7 +451,7 @@ const getSocketTable = (socket) => {
   const bound = socket.data.table;
   if (!bound || !socket.rooms.has(`table-${bound.id}`)) return null;
   const table = findTable(bound.id);
-  return table && table.qrToken === bound.token && table.visitCode === bound.visitCode ? table : null;
+  return table && safeEqual(table.qrToken, bound.token) && table.visitCode === bound.visitCode ? table : null;
 };
 
 // IP del cliente de un socket, para el freno del código de visita. Detrás de un proxy
@@ -868,7 +868,7 @@ io.on('connection', (socket) => {
       // token no es el de su QR (URL armada a mano, QR regenerado): el cliente lo usa
       // para mostrar "mesa no disponible" en vez de quedarse mudo. Sin token válido no
       // entra a la sala, así que tampoco ve los pedidos ni el estado de esa mesa.
-      if (!table || typeof token !== 'string' || token !== table.qrToken) {
+      if (!table || typeof token !== 'string' || !safeEqual(token, table.qrToken)) {
         socket.emit('table-state', null);
         return;
       }

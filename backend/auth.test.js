@@ -1,12 +1,32 @@
 // Unit tests de sesiones y freno de login (auth.js), con un reloj falso.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { passwordMatches, createSessionStore, createLoginThrottle, throttleKeyForIp } from './auth.js';
+import { safeEqual, passwordMatches, createSessionStore, createLoginThrottle, throttleKeyForIp } from './auth.js';
 
 const fakeClock = (start = 1_000_000) => {
   let t = start;
   return { now: () => t, advance: (ms) => { t += ms; } };
 };
+
+describe('safeEqual', () => {
+  test('acepta strings iguales y rechaza distintos o de distinto largo', () => {
+    assert.equal(safeEqual('secreto-123', 'secreto-123'), true);
+    assert.equal(safeEqual('', ''), true);
+    assert.equal(safeEqual('secreto-123', 'secreto-124'), false);
+    assert.equal(safeEqual('secreto-12', 'secreto-123'), false);
+    assert.equal(safeEqual('', 'secreto-123'), false);
+  });
+
+  test('devuelve false si alguno de los argumentos no es string', () => {
+    assert.equal(safeEqual(undefined, 'abc'), false);
+    assert.equal(safeEqual('abc', undefined), false);
+    assert.equal(safeEqual(null, 'abc'), false);
+    assert.equal(safeEqual('abc', null), false);
+    assert.equal(safeEqual(123, 123), false);
+    assert.equal(safeEqual(['abc'], 'abc'), false);
+    assert.equal(safeEqual('abc', { toString: () => 'abc' }), false);
+  });
+});
 
 describe('passwordMatches', () => {
   test('acepta solo la contraseña exacta y en string', () => {
